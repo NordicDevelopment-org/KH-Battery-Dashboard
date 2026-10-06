@@ -1,0 +1,62 @@
+{
+  "company": {
+    "name": "Kendall Howard",
+    "address": "",
+    "phone": "",
+    "cert_title": "Certificate of State of Charge",
+    "cert_subtitle": "Lithium Iron Phosphate (LiFePO4) Batteries - Prepared for Transport",
+    "cert_footer": ""
+  },
+  "bench": {
+    "db_path": "data/bench.db",
+    "sample_interval_s": 1.0,
+    "log_interval_s": 10.0,
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "channels": [
+    {"id": 1, "name": "CH1", "driver": "simulated", "time_scale": 120},
+    {"id": 2, "name": "CH2", "driver": "simulated", "time_scale": 120},
+    {"id": 3, "name": "CH3", "driver": "simulated", "time_scale": 120},
+    {"id": 4, "name": "CH4", "driver": "simulated", "time_scale": 120},
+    {"id": 5, "name": "CH5", "driver": "simulated", "time_scale": 120},
+    {"id": 6, "name": "CH6", "driver": "simulated", "time_scale": 120},
+    {"id": 7, "name": "CH7", "driver": "simulated", "time_scale": 120},
+    {"id": 8, "name": "CH8", "driver": "simulated", "time_scale": 120}
+  ],
+  "profiles": [
+    {
+      "name": "LFP 12.8V 100Ah",
+      "model": "12.8V 100Ah LiFePO4",
+      "cells_series": 4,
+      "rated_ah": 100,
+      "discharge_a": 25,
+      "target_soc": 30,
+      "min_final_soc": 20,
+      "cutoff_cell_v": 2.8,
+      "min_start_cell_v": 3.32,
+      "rest_minutes": 30,
+      "ocv_check": true,
+      "ocv_cell_min": 3.18,
+      "ocv_cell_max": 3.30
+    },
+    {
+      "name": "LFP 12.8V 50Ah",
+      "model": "12.8V 50Ah LiFePO4",
+      "cells_series": 4,
+      "rated_ah": 50,
+      "discharge_a": 15,
+      "target_soc": 30,
+      "rest_minutes": 30
+    },
+    {
+      "name": "LFP 25.6V 100Ah",
+      "model": "25.6V 100Ah LiFePO4",
+      "cells_series": 8,
+      "rated_ah": 100,
+      "discharge_a": 25,
+      "target_soc": 30,
+      "rest_minutes": 30
+    }
+  ]
+}

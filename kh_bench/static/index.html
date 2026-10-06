@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KH Battery Bench</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">KH Battery Bench <span class="sub">LiFePO4 discharge &amp; SOC certification</span></div>
+  <div class="counts" id="counts"></div>
+</header>
+
+<section class="controls">
+  <label>Job / Lot
+    <div class="row">
+      <select id="jobSelect"></select>
+      <button class="btn ghost" id="newJobBtn" title="New job">+ New</button>
+    </div>
+  </label>
+  <label>Operator
+    <input id="operator" placeholder="Your name" autocomplete="off">
+  </label>
+  <label>Default profile
+    <select id="defaultProfile"></select>
+  </label>
+  <div class="spacer"></div>
+  <button class="btn primary" id="startAllBtn">Start all staged</button>
+  <button class="btn danger ghost" id="stopAllBtn">Stop all</button>
+</section>
+
+<main>
+  <div id="grid" class="grid"></div>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2 id="jobTitle">Job</h2>
+      <div class="row">
+        <input id="search" placeholder="Search serial (all jobs)" autocomplete="off">
+        <a class="btn ghost" id="csvBtn" target="_blank">Export CSV</a>
+        <a class="btn primary" id="batchCertBtn" target="_blank">Print batch certificate</a>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="runs">
+        <thead><tr>
+          <th>Serial</th><th>Model</th><th>Ch</th><th>Started</th>
+          <th class="num">Ah out</th><th class="num">Final SOC</th><th class="num">OCV</th>
+          <th>Result</th><th>Cert No.</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<dialog id="jobDialog">
+  <form method="dialog" id="jobForm">
+    <h3>New job</h3>
+    <label>Customer *<input name="customer" required></label>
+    <label>PO number<input name="po_number"></label>
+    <label>Lot / batch<input name="lot"></label>
+    <label>Notes<input name="notes"></label>
+    <div class="row end">
+      <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" value="ok">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<template id="cardTpl">
+  <div class="card">
+    <div class="card-head">
+      <span class="ch-name"></span>
+      <span class="pill"></span>
+    </div>
+    <div class="setup">
+      <input class="serial" placeholder="Scan / type serial #" autocomplete="off" spellcheck="false">
+      <div class="row">
+        <select class="profile"></select>
+        <label class="soc-in" title="Starting SOC % (100 = fresh off charger)">
+          <input class="start-soc" type="number" min="31" max="100" value="100">%
+        </label>
+      </div>
+      <button class="btn primary start">Start</button>
+    </div>
+    <div class="live">
+      <div class="serial-big"></div>
+      <div class="soc-row">
+        <span class="soc-num"></span>
+        <span class="soc-target"></span>
+      </div>
+      <div class="bar"><div class="fill"></div><div class="target-mark"></div></div>
+      <div class="stats">
+        <div><span>Volts</span><b class="v"></b></div>
+        <div><span>Amps</span><b class="i"></b></div>
+        <div><span>Ah out</span><b class="ah"></b></div>
+        <div><span class="eta-lbl">ETA</span><b class="eta"></b></div>
+      </div>
+      <svg class="spark" viewBox="0 0 200 40" preserveAspectRatio="none"><polyline/></svg>
+      <div class="msg"></div>
+      <div class="row actions">
+        <button class="btn danger ghost stop">Stop</button>
+        <a class="btn primary cert" target="_blank">Certificate</a>
+        <button class="btn ghost clear">Next battery</button>
+      </div>
+    </div>
+    <div class="offline">
+      <div class="msg"></div>
+      <button class="btn ghost reconnect">Reconnect</button>
+    </div>
+  </div>
+</template>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
