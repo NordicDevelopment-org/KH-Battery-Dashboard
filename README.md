@@ -1,9 +1,12 @@
 # KH-Battery-Dashboard
 Track SOC, serial number and date/time, and print a certificate, all from one tool.
 
-**KH Battery Bench** discharges LiFePO4 batteries to **30% SOC** on many channels in parallel,
+**KH Battery Bench** discharges LiFePO4 batteries to a certified state of charge **at or under
+30% of rated capacity** (IATA DGR PI 965/966, 49 CFR 173.185) on many channels in parallel,
 logs every run, prints certificates per unit or per customer batch, and pushes events to
 Node-RED (or any webhook) so people get alerted.
+
+Design background, hardware sizing and the 20-channel scale plan: [docs/DESIGN.md](docs/DESIGN.md).
 
 ![dashboard](docs/samples/dashboard.png)
 
@@ -13,15 +16,23 @@ Node-RED (or any webhook) so people get alerted.
 
 | Step | What happens | Pass/fail gate |
 |---|---|---|
-| 1. Pre-check | Reads the rested battery voltage with the load OFF | V/cell >= `min_start_cell_v` (3.32). Below that the battery isn't full, so the run is rejected |
-| 2. Discharge | Constant-current load ON; Ah are integrated from *measured* current every second | Stops when `Ah removed = (start SOC - 30%) x rated Ah`. Safety stops: cutoff voltage, low current, over-temp, timeout |
+| 1. Pre-check | Reads the rested battery voltage with the load OFF. Current is capped so `V x I <= Max W` of the load | V/cell >= `min_start_cell_v` (3.32). Below that the battery isn't full, so the run is rejected. Profile must be marked **Verified** |
+| 2. Discharge | Load's own voltage + capacity stops are armed (Siglent). Constant-current load ON; Ah are integrated from *measured* current every second | Stops when `Ah removed = rated Ah x (capacity_factor - target_soc)`. Safety stops: cutoff voltage, low current, over-temp, timeout |
 | 3. Rest | Load OFF for `rest_minutes` (30); voltage is logged | - |
-| 4. Verdict | Records rested OCV | Final SOC between 20% and 30%, **and** OCV within 3.18-3.30 V/cell |
+| 4. Verdict | Records rested OCV, cross-checks the load's Ah counter, computes nominal and worst-case SOC | **Worst-case SOC + measurement uncertainty <= `soc_limit` (30%)** and nominal SOC >= `min_final_soc`. OCV window and Ah cross-check are advisory notes only |
 | 5. Certificate | PASS gets a unique cert no. `KH-YYYYMMDD-####` | - |
 
+**Two SOC numbers, both as % of RATED capacity** (the limit is written against rated, not actual):
+
+- *Nominal* assumes the battery holds exactly its nameplate Ah.
+- *Worst case* assumes it holds `capacity_factor` x nameplate (default 1.05; LFP packs are
+  routinely delivered 2-5% over) and adds the load's current readback uncertainty. A 100 Ah
+  profile at target 25% removes 80 Ah: a true-100 Ah pack ends at 20%, a 105 Ah pack at 25%.
+  Both are under 30%. Set `capacity_factor` from your own lot measurements.
+
 **Why coulomb counting and not voltage:** LiFePO4 voltage is nearly flat from 20-80% SOC
-(+/-0.05 V/cell), so voltage alone can't tell 30% from 50%. The tool counts amp-hours out of
-a **fully charged** battery, then uses rested voltage only as a cross-check.
+(a few mV per 1% SOC) and shows hysteresis, so voltage alone can't certify 30%. The tool counts
+amp-hours out of a **fully charged** battery; rested voltage is recorded for reference only.
 **Every battery must come off a full charge.** The pre-check enforces this.
 
 ---
@@ -68,8 +79,8 @@ never overwritten. Nothing needs hand-edited JSON.
 | Section | What you set | When it applies |
 |---|---|---|
 | Company & Certificate | Name, address, cert title and statement, footer. **Preview certificate** shows a sample PDF | Immediately on Save |
-| Channels / Loads | One row per load channel: driver, VISA address, command set, max amps. **Find instruments** scans USB/serial. **Test** talks to a load before you save | On Save. Reconnects all loads, so the bench must be idle |
-| Battery Profiles | One per battery model. The header shows Ah removed and time per battery | Immediately (new runs) |
+| Channels / Loads | One row per load channel: driver, VISA address, command set, max amps, **max watts** (power cap), remote sense. **Find instruments** scans USB/serial. **Test** talks to a load before you save | On Save. Reconnects all loads, so the bench must be idle |
+| Battery Profiles | One per manufacturer + model. Specs, source, **Verified** tick, compliance numbers. The header shows Ah removed and nominal/worst SOC | Immediately (new runs) |
 | Notifications | Station name, webhook URLs, which events each one gets. **Send test** | Immediately |
 | Advanced | Poll/log intervals, DB file, listen address/port | Interval: immediately. DB/host/port: restart |
 
@@ -95,7 +106,7 @@ background with 3 retries, so a down Node-RED never slows or stops a run.
 
 Every event looks like this. `text` is a ready-to-send one-liner:
 ```json
-{"event": "run.passed", "text": "Bench 1 CH3: KH-0001 PASS - 30.0% SOC, OCV 13.01 V",
+{"event": "run.passed", "text": "Bench 1 CH3: KH-0001 PASS - 20.0% nominal, 25.1% worst case, OCV 13.01 V",
  "station": "Bench 1", "time": "2026-10-06T14:07:11", "channel": "CH3", "serial": "KH-0001",
  "result": "PASS", "cert_no": "KH-20261006-0007", "job_id": 1, "run": {"...": "full run record"}}
 ```
@@ -130,7 +141,7 @@ incoming-webhook URL and use the `text` field.
 | Command set | Loads |
 |---|---|
 | `rigol_dl3000` | Rigol DL3021 / DL3031 |
-| `siglent_sdl1000` | Siglent SDL1020X / SDL1030X |
+| `siglent_sdl1000` | Siglent SDL1020X / SDL1020X-E / SDL1030X / SDL1030X-E. Uses the load's battery-test mode so it stops itself on cutoff voltage or capacity even if the PC drops; reports its own Ah counter for a cross-check |
 | `bk_8600` | B&K Precision 8600 series |
 | `chroma_63600` | Chroma 63600 multi-channel mainframe (set *Mainframe ch*) |
 
@@ -138,24 +149,36 @@ To support another load, add its SCPI commands to `PRESETS` in `kh_bench/drivers
 Nothing else changes.
 
 **Wiring/safety notes**
-- Use the load's **remote sense** leads at the battery terminals, or V readings will include lead drop.
+- Use the load's **remote sense** leads at the battery terminals (tick *Sense* on the channel), or V readings will include lead drop.
 - Fuse each battery lead. The tool switches every load OFF on finish, fail, stop and server shutdown, but the hardware fuse is your last line of defense.
-- Check each load's power rating: 12.8 V x 25 A = ~320 W per channel.
-- First live run: **one battery, one channel, someone watching**.
+- **Set Max W per channel.** The SDL1020X-E is 200 W rated (OPP trips at 210 W): use 180. That means ~13 A on a 12.8 V pack and ~6.5 A on 25.6 V, so about 6 h per 100 Ah battery. The profile's `discharge_a` is only an upper bound.
+- Every watt removed becomes heat in the room: 180 W per channel, 3.6 kW (~12,300 BTU/h) at 20 channels. Rack loads front-to-back and duct the exhaust.
+- First live run: **one battery, one channel, someone watching.** Check that the certificate's "Load's own counter" agrees with the bench Ah within 2%; a 1000x mismatch means the `:BATT:DISCH:CAP?` units differ from mAh on that firmware.
+- **Lot qualification:** before trusting `capacity_factor`, discharge 3+ full packs from each lot to cutoff and set the factor to the highest measured capacity / rated, rounded up.
 
 ## Battery profile fields
 
 | Field | Default | Meaning |
 |---|---|---|
-| `rated_ah` | - | Nameplate capacity. SOC % is relative to this |
+| `manufacturer`, `model` | - | Exact manufacturer part number. One profile per mfr + model |
+| `source` | - | Where the numbers came from (datasheet title / URL / date) |
+| `verified` | false | Tick only after every value is checked against the manufacturer datasheet. **Unverified profiles cannot start** |
+| `rated_ah` | - | Datasheet RATED capacity. Both SOC figures are relative to this |
 | `cells_series` | 4 | 4 = 12.8 V, 8 = 25.6 V, 16 = 51.2 V |
-| `discharge_a` | - | Discharge current (capped by channel Max A) |
-| `target_soc` | 30 | Stop point |
-| `min_final_soc` | 20 | Below this = FAIL (over-discharged) |
+| `discharge_a` | - | Upper bound on CC setpoint (also capped by channel Max A and Max W) |
+| `soc_limit` | 30 | Regulatory ceiling, % of rated |
+| `target_soc` | 25 | Where the worst-case battery lands. Must be below `soc_limit` |
+| `capacity_factor` | 1.05 | Worst-case actual / rated capacity. Set from lot qualification |
+| `min_final_soc` | 15 | Nominal SOC below this = FAIL (over-discharged) |
 | `min_start_cell_v` | 3.32 | Pre-check for "fully charged". Set 0 to disable |
-| `cutoff_cell_v` | 2.80 | Safety abort |
+| `cutoff_cell_v` | 2.80 | Safety abort; keep above the pack's BMS cut-off |
 | `rest_minutes` | 30 | Rest before the OCV reading |
-| `ocv_cell_min/max` | 3.18 / 3.30 | Rested V/cell window at ~30% |
+| `ocv_check`, `ocv_cell_min/max` | on, 3.15 / 3.30 | Advisory window; outside it adds a note, never a FAIL |
+
+Shipped profiles: **LiTime 12V 100Ah Group24** (from LiTime's product page) and **Green Cubes
+SWIB-2440** (from KH's spec text). Both are `verified: false` until someone checks them against
+the datasheet in hand. Current 180 W runs: LiTime ~13.4 A for ~6 h removing 80 Ah; SWIB-2440
+~6.6 A for ~5 h removing 32 Ah.
 
 **Have your compliance/shipping contact review the certification statement before using it with customers.**
 

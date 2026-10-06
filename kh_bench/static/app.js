@@ -67,7 +67,7 @@ async function init() {
 async function loadJobs(selectId) {
   const jobs = await api("/api/jobs");
   const sel = $("#jobSelect");
-  sel.innerHTML = `<option value="">— No job (unassigned) —</option>` + jobs.map((j) =>
+  sel.innerHTML = `<option value="">- No job (unassigned) -</option>` + jobs.map((j) =>
     `<option value="${j.id}">${j.customer}${j.lot ? " · " + j.lot : ""}${j.po_number ? " · PO " + j.po_number : ""}  (${j.pass_count}/${j.run_count})</option>`).join("");
   if (selectId && jobs.some((j) => String(j.id) === String(selectId))) sel.value = selectId;
   selectJob(sel.value);
@@ -144,7 +144,7 @@ function focusNextEmpty(fromId) {
     if (c.el.classList.contains("v-setup") && !c.refs.serial.value.trim()) { c.refs.serial.focus(); return; }
   }
   document.activeElement.blur();
-  toast("All open channels staged — press Start all staged");
+  toast("All open channels staged - press Start all staged");
 }
 
 function updateCard(ch) {
@@ -165,7 +165,7 @@ function updateCard(ch) {
   refs.serialBig.textContent = L.serial || "";
   refs.serialBig.title = `${L.serial} · ${L.profile}`;
   refs.socNum.textContent = soc === undefined ? "–" : `${fmt(soc, 1)}%`;
-  refs.socTarget.textContent = `target ≤ ${L.target_soc}%`;
+  refs.socTarget.textContent = L.worst_soc != null ? `worst ${fmt(L.worst_soc, 1)}% · target ≤ ${L.target_soc}%` : `target ≤ ${L.target_soc}%`;
   refs.fill.style.width = `${Math.max(0, Math.min(100, soc ?? 0))}%`;
   refs.mark.style.left = `${L.target_soc}%`;
   refs.v.textContent = fmt(L.voltage, 2);
@@ -232,13 +232,13 @@ async function startChannel(id, { quiet = false } = {}) {
 }
 
 async function startAll() {
-  if (!jobId && !confirm("No job selected — runs won't be on a batch certificate. Continue?")) return;
+  if (!jobId && !confirm("No job selected - runs won't be on a batch certificate. Continue?")) return;
   let started = 0;
   for (const [id, c] of cards) {
     if (c.el.classList.contains("v-setup") && c.refs.serial.value.trim())
       if (await startChannel(id, { quiet: true })) started++;
   }
-  toast(started ? `Started ${started} channel${started > 1 ? "s" : ""}` : "Nothing staged — scan serials into ready channels");
+  toast(started ? `Started ${started} channel${started > 1 ? "s" : ""}` : "Nothing staged - scan serials into ready channels");
   poll();
 }
 
@@ -268,9 +268,9 @@ async function loadRuns() {
       <td>${esc(r.channel)}</td>
       <td>${esc((r.started_at || "").replace("T", " ").slice(0, 16))}</td>
       <td class="num">${fmt(r.ah_removed, 2)}</td>
-      <td class="num">${r.final_soc == null ? "–" : fmt(r.final_soc, 1) + "%"}</td>
+      <td class="num">${r.final_soc == null ? "–" : fmt(r.final_soc, 1) + "%"}${r.worst_soc == null ? "" : `<div class="reason">worst ${fmt(r.worst_soc, 1)}%</div>`}</td>
       <td class="num">${fmt(r.ocv_v, 2)}</td>
-      <td><span class="res ${esc(res)}">${esc(res)}</span>${r.fail_reason ? `<div class="reason">${esc(r.fail_reason)}</div>` : ""}</td>
+      <td><span class="res ${esc(res)}">${esc(res)}</span>${r.fail_reason ? `<div class="reason">${esc(r.fail_reason)}</div>` : ""}${r.warnings ? `<div class="reason">note: ${esc(r.warnings)}</div>` : ""}</td>
       <td class="mono">${esc(r.cert_no || "")}</td>
       <td><a href="/api/runs/${r.id}/certificate.pdf" target="_blank">${r.result === "PASS" ? "Cert" : "Report"}</a><a href="/api/runs/${r.id}/samples.csv">Data</a></td>
     </tr>`;

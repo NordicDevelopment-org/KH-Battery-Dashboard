@@ -243,13 +243,18 @@ def create_app(config: Optional[BenchConfig] = None, db: Optional[Database] = No
     def sample_cert():
         """Preview of the cert wording/branding with made-up data."""
         prof = bench.config.profiles[0]
+        from .soc import ah_to_remove, soc_after
+        ah = ah_to_remove(prof.rated_ah, 100, prof.target_soc, prof.capacity_factor)
         run = {"id": 0, "cert_no": "SAMPLE-0000", "serial": "SAMPLE-SN-0001", "profile": prof.name,
-               "model": prof.model, "channel": "CH1", "operator": "Operator Name",
-               "instrument": "(sample)", "rated_ah": prof.rated_ah, "cells_series": prof.cells_series,
-               "discharge_a": prof.discharge_a, "start_soc": 100, "target_soc": prof.target_soc,
-               "result": "PASS", "final_soc": prof.target_soc, "start_v": prof.cells_series * 3.36,
-               "ocv_v": prof.cells_series * 3.25, "ah_removed": prof.rated_ah * (100 - prof.target_soc) / 100,
-               "wh_removed": prof.rated_ah * (100 - prof.target_soc) / 100 * prof.cells_series * 3.2,
+               "model": prof.model, "manufacturer": prof.manufacturer, "channel": "CH1",
+               "operator": "Operator Name", "instrument": "(sample)", "rated_ah": prof.rated_ah,
+               "cells_series": prof.cells_series, "discharge_a": prof.discharge_a,
+               "start_soc": 100, "target_soc": prof.target_soc, "soc_limit": prof.soc_limit,
+               "capacity_factor": prof.capacity_factor, "result": "PASS",
+               "final_soc": soc_after(prof.rated_ah, 100, ah),
+               "worst_soc": prof.target_soc + 0.15, "uncertainty_pts": 0.15,
+               "start_v": prof.cells_series * 3.36, "ocv_v": prof.cells_series * 3.25,
+               "ah_removed": ah, "wh_removed": ah * prof.cells_series * 3.2,
                "max_temp_c": 30.0, "started_at": "2026-01-01T08:00:00",
                "discharge_end_at": "2026-01-01T10:48:00", "ended_at": "2026-01-01T11:18:00"}
         job = {"customer": "Sample Customer", "po_number": "PO-0000", "lot": "LOT-0000"}

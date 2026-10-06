@@ -1,10 +1,15 @@
 """Bench engine: runs one discharge cycle per channel, in parallel.
 
 Cycle per battery:
-  1. Pre-check   - read rested voltage, refuse if it's too low to be a full battery
-  2. Discharge   - constant current, coulomb-count Ah until SOC hits target
+  1. Pre-check   - read rested voltage, refuse if it's too low to be a full battery;
+                   cap the current so V * I stays under the channel's power limit
+  2. Discharge   - constant current, coulomb-count Ah until the WORST-CASE battery
+                   (capacity_factor x rated) reaches target_soc; the load's own
+                   voltage/capacity stops are armed first where the driver supports it
   3. Rest        - load off, let voltage settle, record open-circuit voltage
-  4. Verdict     - PASS/FAIL, certificate number assigned on PASS
+  4. Verdict     - PASS when worst-case SOC (+ measurement uncertainty) <= soc_limit
+                   and nominal SOC >= min_final_soc; certificate number on PASS.
+                   OCV window and Ah cross-check are advisory warnings only.
 Any error or stop request turns the load OFF.
 """
 
@@ -19,11 +24,19 @@ from .config import BatteryProfile, BenchConfig, ChannelConfig
 from .db import Database, now_iso
 from .drivers import LoadDriver, close_shared_sessions, make_driver
 from .notify import Notifier
-from .soc import ah_to_remove, soc_after, soc_from_ocv
+from .soc import ah_to_remove, measurement_uncertainty_pts, soc_after, soc_from_ocv
 
 log = logging.getLogger("kh_bench")
 
 LOW_CURRENT_SAMPLES = 5  # consecutive samples under 50% setpoint -> fault
+AH_CROSSCHECK_PCT = 2.0  # bench Ah vs load's own counter differ more than this -> warning
+
+
+def power_capped_current(amps: float, voltage: float, max_power_w: Optional[float]) -> float:
+    """Reduce the CC setpoint so voltage * current stays under the load's power cap."""
+    if max_power_w and voltage > 0:
+        amps = min(amps, max_power_w / voltage)
+    return round(amps, 3)
 
 
 class RunFailed(Exception):
@@ -136,16 +149,24 @@ class Bench:
             if other.busy and other.live.get("serial") == serial:
                 raise ValueError(f"Serial {serial} is already running on {other.cfg.name}")
         prof = self.config.profile(profile_name)
+        if not prof.verified:
+            raise ValueError(f"Profile '{prof.name}' is not verified against the manufacturer "
+                             "datasheet. Check every value on the Setup page, tick Verified, save.")
         if not prof.target_soc < start_soc <= 100:
             raise ValueError(f"Start SOC must be between {prof.target_soc} and 100")
-        amps = min(prof.discharge_a, ch.cfg.max_current_a)
+        # Provisional setpoint from nominal voltage; refined against the measured
+        # start voltage in the pre-check.
+        amps = power_capped_current(min(prof.discharge_a, ch.cfg.max_current_a),
+                                    prof.nominal_v, ch.cfg.max_power_w)
+        ah_target = ah_to_remove(prof.rated_ah, start_soc, prof.target_soc, prof.capacity_factor)
 
         run_id = self.db.create_run(
             job_id=job_id, serial=serial, profile=prof.name, model=prof.model,
+            manufacturer=prof.manufacturer,
             channel=ch.cfg.name, operator=operator, instrument=ch.idn,
             rated_ah=prof.rated_ah, cells_series=prof.cells_series, discharge_a=amps,
-            start_soc=start_soc, target_soc=prof.target_soc,
-            ah_target=round(ah_to_remove(prof.rated_ah, start_soc, prof.target_soc), 3),
+            start_soc=start_soc, target_soc=prof.target_soc, soc_limit=prof.soc_limit,
+            capacity_factor=prof.capacity_factor, ah_target=round(ah_target, 3),
             status="running", started_at=now_iso(),
         )
         ch.stop_requested = False
@@ -183,14 +204,20 @@ class Bench:
         bench = self.config.bench
         scale = drv.time_scale
         cells = prof.cells_series
-        ah_target = ah_to_remove(prof.rated_ah, start_soc, prof.target_soc)
-        expected_s = ah_target / amps * 3600
-        timeout_s = (prof.max_minutes * 60) if prof.max_minutes else expected_s * 1.5 + 600
+        k = prof.capacity_factor
+        ah_target = ah_to_remove(prof.rated_ah, start_soc, prof.target_soc, k)
         ah = wh = 0.0
         max_temp: Optional[float] = None
         t_bench = 0.0
         last_log = -1e9
         v = i = 0.0
+        warnings: list[str] = []
+
+        def nominal(ah_out: float) -> float:
+            return soc_after(prof.rated_ah, start_soc, ah_out)
+
+        def worst(ah_out: float) -> float:
+            return soc_after(prof.rated_ah, start_soc, ah_out, k)
 
         def record(phase: str, m, soc: float) -> None:
             nonlocal last_log, max_temp
@@ -223,7 +250,17 @@ class Bench:
             if start_v / cells < prof.cutoff_cell_v:
                 raise RunFailed(f"Start voltage {start_v:.2f} V below cutoff - check battery/leads")
 
+            # power cap against the REAL start voltage (a full pack sits above nominal)
+            amps = power_capped_current(amps, start_v, ch.cfg.max_power_w)
+            ch.live["setpoint_a"] = amps
+            self.db.update_run(run_id, discharge_a=amps)
+            expected_s = ah_target / amps * 3600
+            timeout_s = (prof.max_minutes * 60) if prof.max_minutes else expected_s * 1.5 + 600
+
             # 2. discharge
+            await self._io(ch, drv.set_remote_sense, ch.cfg.remote_sense)
+            warnings += await self._io(ch, drv.arm_hardware_stops, amps,
+                                       prof.cutoff_cell_v * cells, ah_target)
             await self._io(ch, drv.set_cc, amps)
             await self._io(ch, drv.enable, True)
             ch.message = f"Discharging @ {amps:g} A"
@@ -250,8 +287,9 @@ class Bench:
                 ah += (i_prev + i) / 2 * dt / 3600
                 wh += v * (i_prev + i) / 2 * dt / 3600
                 i_prev = i
-                soc = soc_after(prof.rated_ah, start_soc, ah)
+                soc = nominal(ah)
                 ch.live["eta_s"] = round(max(0.0, (ah_target - ah) / max(i, 0.01) * 3600))
+                ch.live["worst_soc"] = round(worst(ah), 2)
                 record("discharge", m, soc)
 
                 if ah >= ah_target:
@@ -260,6 +298,14 @@ class Bench:
                     raise RunFailed(
                         f"Hit cutoff {v:.2f} V after {ah:.2f} Ah of {ah_target:.2f} Ah - "
                         "battery had less charge than assumed (recharge & retest)")
+                if i < 0.05 and t_bench > 5 and getattr(drv, "hardware_stops_armed", False):
+                    # the load stopped itself (capacity backstop or protection trip)
+                    la = await self._io(ch, drv.load_ah)
+                    if la is not None and la >= ah_target * 0.995:
+                        ah = max(ah, la)
+                        break
+                    raise RunFailed(f"Load input dropped at {ah:.2f} Ah of {ah_target:.2f} Ah "
+                                    "(protection trip?) - check the load display")
                 low_count = low_count + 1 if i < 0.5 * amps else 0
                 if low_count >= LOW_CURRENT_SAMPLES:
                     raise RunFailed(f"Load not drawing current ({i:.2f} A of {amps:g} A) - check connections")
@@ -269,9 +315,21 @@ class Bench:
                     raise RunFailed(f"Timeout after {t_bench / 60:.0f} min")
 
             await self._io(ch, drv.enable, False)
-            final_soc = soc_after(prof.rated_ah, start_soc, ah)
+
+            # Cross-check against the load's own counter; credit the SMALLER figure
+            # so SOC is never overstated.
+            ah_load = await self._io(ch, drv.load_ah)
+            if ah_load is not None and ah_load > 0:
+                diff = abs(ah_load - ah) / max(ah, 1e-9) * 100
+                if diff > AH_CROSSCHECK_PCT:
+                    warnings.append(f"Load counter {ah_load:.2f} Ah vs bench {ah:.2f} Ah "
+                                    f"differ {diff:.1f}% (verify driver units)")
+                ah = min(ah, ah_load)
+
+            final_soc = nominal(ah)
             self.db.update_run(run_id, status="resting", discharge_end_at=now_iso(),
                                end_v_loaded=round(v, 3), ah_removed=round(ah, 4),
+                               ah_load=None if ah_load is None else round(ah_load, 4),
                                wh_removed=round(wh, 2), final_soc=round(final_soc, 2))
             ch.live["eta_s"] = 0
             self._notify_run("run.resting", ch, run_id,
@@ -304,24 +362,34 @@ class Bench:
             ocv = m.voltage
             ocv_cell = ocv / cells
             ocv_soc = soc_from_ocv(ocv_cell)
+            unc = measurement_uncertainty_pts(ah, prof.rated_ah, amps, ch.cfg.err_pct_reading,
+                                              ch.cfg.err_pct_fs, ch.cfg.fs_a)
+            worst_soc = worst(ah) + unc
             reasons = []
-            if final_soc > prof.target_soc + 0.5:
-                reasons.append(f"Final SOC {final_soc:.1f}% above {prof.target_soc}%")
+            if worst_soc > prof.soc_limit:
+                reasons.append(f"Worst-case SOC {worst_soc:.1f}% (k={k:g}, +{unc:.2f} pts) "
+                               f"exceeds limit {prof.soc_limit:g}%")
             if final_soc < prof.min_final_soc:
                 reasons.append(f"Final SOC {final_soc:.1f}% below minimum {prof.min_final_soc}%")
+            # OCV is advisory on LiFePO4: the curve is flat and hysteretic in this region.
             if prof.ocv_check and not (prof.ocv_cell_min <= ocv_cell <= prof.ocv_cell_max):
-                reasons.append(f"Rested OCV {ocv:.2f} V ({ocv_cell:.3f} V/cell) outside "
-                               f"{prof.ocv_cell_min}-{prof.ocv_cell_max} V/cell window")
+                warnings.append(f"Rested OCV {ocv:.2f} V ({ocv_cell:.3f} V/cell) outside "
+                                f"{prof.ocv_cell_min}-{prof.ocv_cell_max} V/cell window")
             result = "FAIL" if reasons else "PASS"
             cert_no = self.next_cert_no() if result == "PASS" else None
             self.db.update_run(run_id, status="complete", result=result,
                                fail_reason="; ".join(reasons) or None, ended_at=now_iso(),
                                ocv_v=round(ocv, 3), ocv_soc_est=round(ocv_soc, 1),
+                               worst_soc=round(worst_soc, 2), uncertainty_pts=round(unc, 3),
+                               warnings="; ".join(warnings) or None,
                                max_temp_c=max_temp, cert_no=cert_no)
             ch.live.update(result=result, fail_reason="; ".join(reasons), cert_no=cert_no,
-                           ocv_v=round(ocv, 3), phase="done")
-            ch.message = f"PASS - {final_soc:.1f}% SOC, OCV {ocv:.2f} V" if result == "PASS" \
-                else "FAIL - " + "; ".join(reasons)
+                           ocv_v=round(ocv, 3), worst_soc=round(worst_soc, 2),
+                           warnings="; ".join(warnings), phase="done")
+            ch.message = (f"PASS - {final_soc:.1f}% nominal, {worst_soc:.1f}% worst case, "
+                          f"OCV {ocv:.2f} V") if result == "PASS" else "FAIL - " + "; ".join(reasons)
+            if warnings:
+                ch.message += " | " + "; ".join(warnings)
             self._notify_run("run.passed" if result == "PASS" else "run.failed", ch, run_id,
                              f"{ch.cfg.name}: {ch.live['serial']} {ch.message}")
 
@@ -330,7 +398,8 @@ class Bench:
             self.db.update_run(run_id, status="aborted" if aborted else "complete", result="FAIL",
                                fail_reason=str(e), ended_at=now_iso(), ah_removed=round(ah, 4),
                                wh_removed=round(wh, 2), max_temp_c=max_temp,
-                               final_soc=round(soc_after(prof.rated_ah, start_soc, ah), 2))
+                               warnings="; ".join(warnings) or None,
+                               final_soc=round(nominal(ah), 2), worst_soc=round(worst(ah), 2))
             ch.live.update(result="FAIL", fail_reason=str(e), phase="done")
             ch.message = ("ABORTED - " if aborted else "FAIL - ") + str(e)
             self._notify_run("run.aborted" if aborted else "run.failed", ch, run_id,

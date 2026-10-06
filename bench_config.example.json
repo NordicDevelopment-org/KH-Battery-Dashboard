@@ -1,7 +1,7 @@
 {
   "company": {
     "name": "Kendall Howard",
-    "address": "",
+    "address": "Chisago City, MN",
     "phone": "",
     "cert_title": "Certificate of State of Charge",
     "cert_subtitle": "Lithium Iron Phosphate (LiFePO4) Batteries - Prepared for Transport",
@@ -23,84 +23,149 @@
       "id": 1,
       "name": "CH1",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     },
     {
       "id": 2,
       "name": "CH2",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     },
     {
       "id": 3,
       "name": "CH3",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     },
     {
       "id": 4,
       "name": "CH4",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     },
     {
       "id": 5,
       "name": "CH5",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     },
     {
       "id": 6,
       "name": "CH6",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     },
     {
       "id": 7,
       "name": "CH7",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     },
     {
       "id": 8,
       "name": "CH8",
       "driver": "simulated",
-      "time_scale": 120
+      "time_scale": 120,
+      "max_power_w": 180,
+      "remote_sense": true,
+      "preset": "siglent_sdl1000",
+      "max_current_a": 30
     }
   ],
   "profiles": [
     {
-      "name": "LFP 12.8V 100Ah",
-      "model": "12.8V 100Ah LiFePO4",
+      "name": "LiTime 12V 100Ah Group24",
+      "manufacturer": "LiTime",
+      "model": "12V 100Ah Group24",
+      "source": "LiTime product page litime.com/products/12v-100ah-group-24-lithium-battery, read 2026-10-06. Confirm vs the datasheet in hand before ticking verified.",
+      "verified": false,
+      "cells_series": 4,
+      "rated_ah": 100,
+      "discharge_a": 30,
+      "soc_limit": 30,
+      "target_soc": 25,
+      "capacity_factor": 1.05,
+      "min_final_soc": 15,
+      "cutoff_cell_v": 2.75,
+      "min_start_cell_v": 3.325,
+      "rest_minutes": 30,
+      "ocv_check": true,
+      "ocv_cell_min": 3.15,
+      "ocv_cell_max": 3.3,
+      "max_minutes": null,
+      "max_temp_c": 55
+    },
+    {
+      "name": "Green Cubes SWIB-2440",
+      "manufacturer": "Green Cubes Technology",
+      "model": "SWIB-2440",
+      "source": "KH battery spec text 2026-07-13 (8S2P LFP, 25.6 V, 40 Ah, 1024 Wh, 20 A cont / 40 A 10 s, 30.8 V max charge). Confirm vs Green Cubes PDF; BMS cut-off and CANBus wake requirement still open.",
+      "verified": false,
+      "cells_series": 8,
+      "rated_ah": 40,
+      "discharge_a": 20,
+      "soc_limit": 30,
+      "target_soc": 25,
+      "capacity_factor": 1.05,
+      "min_final_soc": 15,
+      "cutoff_cell_v": 2.75,
+      "min_start_cell_v": 3.325,
+      "rest_minutes": 30,
+      "ocv_check": true,
+      "ocv_cell_min": 3.15,
+      "ocv_cell_max": 3.3,
+      "max_minutes": null,
+      "max_temp_c": 45
+    },
+    {
+      "name": "SIM 12.8V 100Ah (demo)",
+      "manufacturer": "Simulator",
+      "model": "SIM-12V100",
+      "source": "Simulated battery for demos and tests only",
+      "verified": true,
       "cells_series": 4,
       "rated_ah": 100,
       "discharge_a": 25,
-      "target_soc": 30,
-      "min_final_soc": 20,
+      "soc_limit": 30,
+      "target_soc": 25,
+      "capacity_factor": 1.05,
+      "min_final_soc": 15,
       "cutoff_cell_v": 2.8,
       "min_start_cell_v": 3.32,
       "rest_minutes": 30,
       "ocv_check": true,
-      "ocv_cell_min": 3.18,
-      "ocv_cell_max": 3.3
-    },
-    {
-      "name": "LFP 12.8V 50Ah",
-      "model": "12.8V 50Ah LiFePO4",
-      "cells_series": 4,
-      "rated_ah": 50,
-      "discharge_a": 15,
-      "target_soc": 30,
-      "rest_minutes": 30
-    },
-    {
-      "name": "LFP 25.6V 100Ah",
-      "model": "25.6V 100Ah LiFePO4",
-      "cells_series": 8,
-      "rated_ah": 100,
-      "discharge_a": 25,
-      "target_soc": 30,
-      "rest_minutes": 30
+      "ocv_cell_min": 3.15,
+      "ocv_cell_max": 3.3,
+      "max_minutes": null,
+      "max_temp_c": 55
     }
   ]
 }

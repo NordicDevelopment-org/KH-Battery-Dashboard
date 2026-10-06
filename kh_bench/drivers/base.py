@@ -34,5 +34,19 @@ class LoadDriver(ABC):
     @abstractmethod
     def measure(self) -> Measurement: ...
 
+    def arm_hardware_stops(self, amps: float, v_cutoff: float, ah_cutoff: float) -> list[str]:
+        """Optional. Arm the load's own stop conditions (cutoff voltage, capacity)
+        so it stops itself even if the PC or network drops. Returns warnings for
+        anything that could not be applied. Loads without the feature do nothing."""
+        return []
+
+    def load_ah(self) -> Optional[float]:
+        """Optional. The load's own discharged-capacity counter in Ah, for a
+        cross-check against the bench's integration. None = not available."""
+        return None
+
+    def set_remote_sense(self, on: bool) -> None:
+        """Optional. Enable 4-wire sense."""
+
     def close(self) -> None:
         pass
