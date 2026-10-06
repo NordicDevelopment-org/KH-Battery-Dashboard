@@ -15,7 +15,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink);
   font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row.end { justify-content: flex-end; }
 
@@ -31,8 +31,8 @@ button, input, select { font: inherit; color: inherit; }
 .controls select, .controls input { min-width: 180px; }
 .spacer { flex: 1; }
 
-input, select { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 7px 9px; }
-input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input, select, textarea { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 7px 9px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 14px;
   border-radius: 6px; border: 1px solid transparent; font-weight: 600; cursor: pointer; text-decoration: none;
@@ -123,4 +123,71 @@ dialog h3 { margin: 0 0 4px; }
   .topbar, .controls, main { padding-left: 16px; padding-right: 16px; }
   .controls select, .controls input { min-width: 0; width: 100%; }
   .controls label { flex: 1 1 100%; }
+}
+
+/* ---------- nav ---------- */
+.nav { display: flex; gap: 4px; margin-left: 12px; }
+.nav a { padding: 6px 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-weight: 600; }
+.nav a.active { background: var(--blue-bg); color: var(--accent); }
+.nav a:hover:not(.active) { background: var(--track); }
+
+/* ---------- setup page ---------- */
+.btn.small { padding: 5px 10px; font-size: 12px; }
+.muted { color: var(--muted); }
+.setup-layout { display: grid; grid-template-columns: 210px 1fr; gap: 20px; padding: 20px 20px 100px; max-width: 1400px; }
+.side { position: sticky; top: 16px; align-self: start; display: flex; flex-direction: column; gap: 2px; }
+.side a { padding: 8px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; font-weight: 600; }
+.side a:hover { background: var(--track); }
+.side-note { margin-top: 14px; font-size: 11px; color: var(--muted); word-break: break-all; }
+.setup-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.setup-main .panel { margin-top: 0; scroll-margin-top: 16px; }
+.sec-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px 16px; }
+.fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.fld em { font-style: normal; font-weight: 400; }
+.fld small { font-weight: 400; font-size: 11px; }
+.fld.wide { grid-column: 1 / -1; }
+.fld.check { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--ink); align-self: end; padding-bottom: 8px; }
+.fld.check small { flex-basis: 100%; color: var(--muted); }
+.fld input, .fld select, .fld textarea { color: var(--ink); font-weight: 400; font-size: 14px; }
+.help { margin: 0; font-size: 12px; color: var(--muted); }
+.callout { background: var(--blue-bg); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.callout code, .side-note code { font-size: 12px; }
+.edit-table td { padding: 6px 6px; vertical-align: middle; }
+.edit-table .fld { gap: 0; }
+.edit-table input, .edit-table select { padding: 6px 7px; }
+.edit-table tbody tr:nth-child(even) { background: none; }
+.edit-table tr.test-row td { border-bottom: 1px solid var(--rule); padding: 0 6px; }
+.edit-table tbody tr:not(.test-row) td { border-bottom: none; }
+.row-actions { white-space: nowrap; }
+.row-actions .btn { margin-left: 4px; }
+.test-out { display: none; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; padding: 6px 8px !important; border-radius: 6px; }
+.test-out.show { display: block; }
+td.test-out.show { display: table-cell; }
+.test-out.ok { color: var(--green); background: var(--green-bg); }
+.test-out.bad { color: var(--red); background: var(--red-bg); }
+details.profile { border: 1px solid var(--rule); border-radius: 8px; padding: 0 14px; }
+details.profile[open] { padding-bottom: 14px; }
+details.profile summary { cursor: pointer; padding: 12px 0; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+details.profile summary b { font-size: 15px; }
+.psum { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pgroup h4 { margin: 10px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }
+.hook { border: 1px solid var(--rule); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--rule); border-radius: 999px;
+  font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; cursor: pointer; }
+.chip input { margin: 0; }
+.chip.on { background: var(--blue-bg); border-color: var(--accent); color: var(--accent); }
+.sub-h { margin: 6px 0 0; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+.savebar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 10px 20px; background: var(--surface); border-top: 1px solid var(--rule); color: var(--muted); font-weight: 600; }
+.savebar.dirty { border-top: 3px solid var(--amber); color: var(--amber); }
+.errors { position: fixed; right: 20px; bottom: 70px; max-width: min(520px, 92vw); background: var(--red-bg); color: var(--red);
+  border: 1px solid var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; }
+.errors ul { margin: 6px 0 0; padding-left: 18px; }
+@media (max-width: 800px) {
+  .setup-layout { grid-template-columns: 1fr; padding: 16px 16px 100px; }
+  .side { position: static; flex-direction: row; flex-wrap: wrap; }
+  .side-note { display: none; }
+  .savebar { padding: 10px 16px; }
 }

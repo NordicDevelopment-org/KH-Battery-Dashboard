@@ -60,12 +60,34 @@ _sessions: dict[str, tuple[object, threading.Lock]] = {}
 _sessions_lock = threading.Lock()
 
 
+def resource_manager():
+    """System VISA (NI-VISA / Keysight / vendor) if installed, else pure-Python pyvisa-py."""
+    import pyvisa  # imported lazily so simulated benches need no VISA install
+
+    try:
+        return pyvisa.ResourceManager()
+    except (OSError, ValueError):
+        return pyvisa.ResourceManager("@py")
+
+
+def list_resources() -> list[str]:
+    return list(resource_manager().list_resources())
+
+
+def close_all() -> None:
+    with _sessions_lock:
+        for inst, _ in _sessions.values():
+            try:
+                inst.close()
+            except Exception:
+                pass
+        _sessions.clear()
+
+
 def _open(resource: str):
     with _sessions_lock:
         if resource not in _sessions:
-            import pyvisa  # imported lazily so simulated benches need no VISA install
-
-            rm = pyvisa.ResourceManager("@py")
+            rm = resource_manager()
             inst = rm.open_resource(resource)
             inst.timeout = 3000
             inst.read_termination = "\n"

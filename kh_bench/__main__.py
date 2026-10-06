@@ -20,7 +20,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.info("Config: %s", config_path())
     from .api import create_app
-    uvicorn.run(create_app(cfg), host=cfg.bench.host, port=args.port or cfg.bench.port)
+    # access_log off: the dashboard polls every second, which buries real events.
+    # Run starts/results/webhook errors are still logged by the engine.
+    uvicorn.run(create_app(cfg), host=cfg.bench.host, port=args.port or cfg.bench.port,
+                access_log=False)
 
 
 if __name__ == "__main__":
