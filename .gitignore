@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+bench_config.json
+.pytest_cache/
