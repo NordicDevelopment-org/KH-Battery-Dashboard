@@ -1,0 +1,218 @@
+[
+  {
+    "id": "khbench.tab",
+    "type": "tab",
+    "label": "KH Battery Bench",
+    "disabled": false,
+    "info": "Receives events from KH Battery Bench.\n\nSETUP\n1. Deploy this flow.\n2. Bench > Setup > Notifications > + Add webhook\n   URL: http://<node-red-host>:1880/kh-bench\n3. Click \"Send test\". It should appear in the debug sidebar.\n\nEVENTS (msg.payload.event)\nrun.started, run.resting, run.passed, run.failed,\nrun.aborted, bench.all_done, channel.offline, test\n\nmsg.payload.text is a ready-to-send one-liner.\nmsg.payload.run has the full run record (serial, SOC, OCV, cert no...).\n\nWIRE THE OUTPUTS TO\n- email node (node-red-node-email)\n- MS Teams / Slack / Power Automate (http request node POSTing to their webhook)\n- a stack light / andon (MQTT, Modbus, GPIO): red on ALERT, green on all_done\n"
+  },
+  {
+    "id": "khbench.note",
+    "type": "comment",
+    "z": "khbench.tab",
+    "x": 170,
+    "y": 40,
+    "name": "READ ME: setup + event list (double-click)",
+    "info": "Receives events from KH Battery Bench.\n\nSETUP\n1. Deploy this flow.\n2. Bench > Setup > Notifications > + Add webhook\n   URL: http://<node-red-host>:1880/kh-bench\n3. Click \"Send test\". It should appear in the debug sidebar.\n\nEVENTS (msg.payload.event)\nrun.started, run.resting, run.passed, run.failed,\nrun.aborted, bench.all_done, channel.offline, test\n\nmsg.payload.text is a ready-to-send one-liner.\nmsg.payload.run has the full run record (serial, SOC, OCV, cert no...).\n\nWIRE THE OUTPUTS TO\n- email node (node-red-node-email)\n- MS Teams / Slack / Power Automate (http request node POSTing to their webhook)\n- a stack light / andon (MQTT, Modbus, GPIO): red on ALERT, green on all_done\n",
+    "wires": []
+  },
+  {
+    "id": "khbench.in",
+    "type": "http in",
+    "z": "khbench.tab",
+    "x": 130,
+    "y": 140,
+    "name": "POST /kh-bench",
+    "url": "/kh-bench",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "wires": [
+      [
+        "khbench.resp",
+        "khbench.switch",
+        "khbench.line"
+      ]
+    ]
+  },
+  {
+    "id": "khbench.resp",
+    "type": "http response",
+    "z": "khbench.tab",
+    "x": 350,
+    "y": 80,
+    "name": "200 OK",
+    "statusCode": "200",
+    "headers": {},
+    "wires": []
+  },
+  {
+    "id": "khbench.switch",
+    "type": "switch",
+    "z": "khbench.tab",
+    "x": 360,
+    "y": 160,
+    "name": "Route by event",
+    "property": "payload.event",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "regex",
+        "v": "^(run\\.failed|run\\.aborted|channel\\.offline)$",
+        "vt": "str",
+        "case": false
+      },
+      {
+        "t": "regex",
+        "v": "^(run\\.passed|bench\\.all_done)$",
+        "vt": "str",
+        "case": false
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 3,
+    "wires": [
+      [
+        "khbench.fnAlert"
+      ],
+      [
+        "khbench.fnOp"
+      ],
+      [
+        "khbench.dbgInfo"
+      ]
+    ]
+  },
+  {
+    "id": "khbench.fnAlert",
+    "type": "function",
+    "z": "khbench.tab",
+    "x": 580,
+    "y": 120,
+    "name": "Format ALERT",
+    "func": "// FAILED / ABORTED / LOAD OFFLINE -> needs a person now\nconst e = msg.payload;\nmsg.topic = `KH Bench ALERT: ${e.event}`;\nmsg.priority = \"high\";\nmsg.payload = e.text + (e.run && e.run.fail_reason ? `\\nReason: ${e.run.fail_reason}` : \"\");\nnode.status({fill: \"red\", shape: \"dot\", text: `${e.channel || \"\"} ${e.event}`});\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "khbench.dbgAlert"
+      ]
+    ]
+  },
+  {
+    "id": "khbench.fnOp",
+    "type": "function",
+    "z": "khbench.tab",
+    "x": 600,
+    "y": 180,
+    "name": "Format operator msg",
+    "func": "// PASSED / ALL DONE -> operator should swap batteries\nconst e = msg.payload;\nmsg.topic = e.event === \"bench.all_done\" ? \"KH Bench: all channels done\" : `KH Bench: ${e.serial} PASS`;\nmsg.priority = \"normal\";\nmsg.payload = e.text + (e.cert_no ? `\\nCert: ${e.cert_no}` : \"\");\nnode.status({fill: \"green\", shape: \"dot\", text: e.text.slice(0, 40)});\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "khbench.dbgOp"
+      ]
+    ]
+  },
+  {
+    "id": "khbench.dbgAlert",
+    "type": "debug",
+    "z": "khbench.tab",
+    "x": 830,
+    "y": 120,
+    "name": "ALERT -> wire to email/Teams/stack light",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "wires": []
+  },
+  {
+    "id": "khbench.dbgOp",
+    "type": "debug",
+    "z": "khbench.tab",
+    "x": 840,
+    "y": 180,
+    "name": "OPERATOR -> wire to Teams/andon",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "wires": []
+  },
+  {
+    "id": "khbench.dbgInfo",
+    "type": "debug",
+    "z": "khbench.tab",
+    "x": 580,
+    "y": 240,
+    "name": "Info (started/resting/test)",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload.text",
+    "targetType": "msg",
+    "statusVal": "payload.text",
+    "statusType": "msg",
+    "wires": []
+  },
+  {
+    "id": "khbench.line",
+    "type": "function",
+    "z": "khbench.tab",
+    "x": 360,
+    "y": 320,
+    "name": "to JSON line",
+    "func": "// One JSON line per event -> kh-bench-events.jsonl (audit trail outside the bench PC)\nmsg.payload = JSON.stringify(msg.payload);\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "khbench.file"
+      ]
+    ]
+  },
+  {
+    "id": "khbench.file",
+    "type": "file",
+    "z": "khbench.tab",
+    "x": 590,
+    "y": 320,
+    "name": "Append kh-bench-events.jsonl",
+    "filename": "kh-bench-events.jsonl",
+    "filenameType": "str",
+    "appendNewline": true,
+    "createDir": true,
+    "overwriteFile": "false",
+    "encoding": "utf8",
+    "wires": [
+      []
+    ]
+  }
+]

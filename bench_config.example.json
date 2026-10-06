@@ -14,15 +14,59 @@
     "host": "0.0.0.0",
     "port": 8000
   },
+  "notifications": {
+    "station": "Bench 1",
+    "webhooks": []
+  },
   "channels": [
-    {"id": 1, "name": "CH1", "driver": "simulated", "time_scale": 120},
-    {"id": 2, "name": "CH2", "driver": "simulated", "time_scale": 120},
-    {"id": 3, "name": "CH3", "driver": "simulated", "time_scale": 120},
-    {"id": 4, "name": "CH4", "driver": "simulated", "time_scale": 120},
-    {"id": 5, "name": "CH5", "driver": "simulated", "time_scale": 120},
-    {"id": 6, "name": "CH6", "driver": "simulated", "time_scale": 120},
-    {"id": 7, "name": "CH7", "driver": "simulated", "time_scale": 120},
-    {"id": 8, "name": "CH8", "driver": "simulated", "time_scale": 120}
+    {
+      "id": 1,
+      "name": "CH1",
+      "driver": "simulated",
+      "time_scale": 120
+    },
+    {
+      "id": 2,
+      "name": "CH2",
+      "driver": "simulated",
+      "time_scale": 120
+    },
+    {
+      "id": 3,
+      "name": "CH3",
+      "driver": "simulated",
+      "time_scale": 120
+    },
+    {
+      "id": 4,
+      "name": "CH4",
+      "driver": "simulated",
+      "time_scale": 120
+    },
+    {
+      "id": 5,
+      "name": "CH5",
+      "driver": "simulated",
+      "time_scale": 120
+    },
+    {
+      "id": 6,
+      "name": "CH6",
+      "driver": "simulated",
+      "time_scale": 120
+    },
+    {
+      "id": 7,
+      "name": "CH7",
+      "driver": "simulated",
+      "time_scale": 120
+    },
+    {
+      "id": 8,
+      "name": "CH8",
+      "driver": "simulated",
+      "time_scale": 120
+    }
   ],
   "profiles": [
     {
@@ -38,7 +82,7 @@
       "rest_minutes": 30,
       "ocv_check": true,
       "ocv_cell_min": 3.18,
-      "ocv_cell_max": 3.30
+      "ocv_cell_max": 3.3
     },
     {
       "name": "LFP 12.8V 50Ah",

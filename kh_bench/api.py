@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import cert
-from .config import BenchConfig, ROOT, load_config
+from .config import (EVENTS, ROOT, BenchConfig, ChannelConfig, Webhook, load_config,
+                     save_config, writable_config_path)
 from .db import Database
 from .engine import Bench
 
@@ -50,8 +51,10 @@ def _csv(rows: list[dict], name: str) -> Response:
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
-def create_app(config: Optional[BenchConfig] = None, db: Optional[Database] = None) -> FastAPI:
+def create_app(config: Optional[BenchConfig] = None, db: Optional[Database] = None,
+               config_file: Optional[Path] = None) -> FastAPI:
     config = config or load_config()
+    config_file = config_file or writable_config_path()
     if db is None:
         p = Path(config.bench.db_path)
         db = Database(str(p if p.is_absolute() else ROOT / p))
@@ -85,9 +88,11 @@ def create_app(config: Optional[BenchConfig] = None, db: Optional[Database] = No
     # ---- bench ----
     @app.get("/api/config")
     def get_config():
-        return {"company": config.company.model_dump(),
-                "profiles": [p.model_dump() for p in config.profiles],
-                "channels": [c.model_dump() for c in config.channels]}
+        cfg = bench.config
+        return {"company": cfg.company.model_dump(),
+                "station": cfg.notifications.station,
+                "profiles": [p.model_dump() for p in cfg.profiles],
+                "channels": [c.model_dump() for c in cfg.channels]}
 
     @app.get("/api/state")
     def get_state():
@@ -152,7 +157,7 @@ def create_app(config: Optional[BenchConfig] = None, db: Optional[Database] = No
         if not job.get("cert_no"):
             job["cert_no"] = bench.next_cert_no()
             db.set_job_cert(job_id, job["cert_no"])
-        pdf = cert.batch_certificate(config, job, runs, job["cert_no"])
+        pdf = cert.batch_certificate(bench.config, job, runs, job["cert_no"])
         return _pdf(pdf, f"{job['cert_no']}.pdf")
 
     @app.get("/api/jobs/{job_id}/report.csv")
@@ -183,8 +188,76 @@ def create_app(config: Optional[BenchConfig] = None, db: Optional[Database] = No
     def run_cert(run_id: int):
         run = run_or_404(run_id)
         job = db.get_job(run["job_id"]) if run.get("job_id") else None
-        pdf = cert.unit_certificate(config, run, db.samples(run_id), job)
+        pdf = cert.unit_certificate(bench.config, run, db.samples(run_id), job)
         return _pdf(pdf, f"{run.get('cert_no') or 'DRAFT'}-{run['serial']}.pdf")
+
+    # ---- setup ----
+    @app.get("/api/setup")
+    def get_setup():
+        from .drivers.scpi import PRESETS
+        return {"config": bench.config.model_dump(), "config_file": str(config_file),
+                "events": EVENTS, "presets": list(PRESETS),
+                "busy": [ch.cfg.name for ch in bench.channels.values() if ch.busy]}
+
+    @app.put("/api/setup")
+    async def save_setup(new: BenchConfig):
+        restart = [k for k in ("db_path", "host", "port")
+                   if getattr(new.bench, k) != getattr(bench.config.bench, k)]
+        try:
+            await bench.apply_config(new)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        path = save_config(new, config_file)
+        return {"saved_to": str(path), "restart_needed": restart}
+
+    @app.post("/api/setup/test-channel")
+    async def test_channel(ch: ChannelConfig):
+        import asyncio
+
+        from .drivers import make_driver
+        for c in bench.channels.values():
+            if c.busy and (c.cfg.id == ch.id or (ch.resource and c.cfg.resource == ch.resource)):
+                raise HTTPException(409, f"{c.cfg.name} is running on this load - test when idle")
+        try:
+            drv = make_driver(ch)
+            idn = await asyncio.to_thread(drv.connect)
+            m = await asyncio.to_thread(drv.measure)
+        except Exception as e:
+            return {"ok": False, "error": str(e) or e.__class__.__name__}
+        return {"ok": True, "idn": idn, "voltage": m.voltage, "current": m.current}
+
+    @app.get("/api/setup/resources")
+    async def visa_resources():
+        import asyncio
+        try:
+            from .drivers.scpi import list_resources
+            return {"ok": True, "resources": await asyncio.to_thread(list_resources)}
+        except Exception as e:
+            return {"ok": False, "resources": [], "error": str(e) or e.__class__.__name__}
+
+    @app.post("/api/setup/test-webhook")
+    async def test_webhook(hook: Webhook):
+        return await bench.notifier.send_test(hook)
+
+    @app.get("/api/setup/sample-certificate.pdf")
+    def sample_cert():
+        """Preview of the cert wording/branding with made-up data."""
+        prof = bench.config.profiles[0]
+        run = {"id": 0, "cert_no": "SAMPLE-0000", "serial": "SAMPLE-SN-0001", "profile": prof.name,
+               "model": prof.model, "channel": "CH1", "operator": "Operator Name",
+               "instrument": "(sample)", "rated_ah": prof.rated_ah, "cells_series": prof.cells_series,
+               "discharge_a": prof.discharge_a, "start_soc": 100, "target_soc": prof.target_soc,
+               "result": "PASS", "final_soc": prof.target_soc, "start_v": prof.cells_series * 3.36,
+               "ocv_v": prof.cells_series * 3.25, "ah_removed": prof.rated_ah * (100 - prof.target_soc) / 100,
+               "wh_removed": prof.rated_ah * (100 - prof.target_soc) / 100 * prof.cells_series * 3.2,
+               "max_temp_c": 30.0, "started_at": "2026-01-01T08:00:00",
+               "discharge_end_at": "2026-01-01T10:48:00", "ended_at": "2026-01-01T11:18:00"}
+        job = {"customer": "Sample Customer", "po_number": "PO-0000", "lot": "LOT-0000"}
+        return _pdf(cert.unit_certificate(bench.config, run, [], job), "sample-certificate.pdf")
+
+    @app.get("/api/setup/notify-log")
+    def notify_log():
+        return list(bench.notifier.history)
 
     # ---- UI ----
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -192,5 +265,9 @@ def create_app(config: Optional[BenchConfig] = None, db: Optional[Database] = No
     @app.get("/")
     def index():
         return FileResponse(STATIC / "index.html")
+
+    @app.get("/setup")
+    def setup_page():
+        return FileResponse(STATIC / "setup.html")
 
     return app

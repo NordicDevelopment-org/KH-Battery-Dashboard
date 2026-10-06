@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bench Setup</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="setup-page">
+<header class="topbar">
+  <div class="brand">KH Battery Bench <span class="sub">Setup</span></div>
+  <nav class="nav"><a href="/">Dashboard</a><a href="/setup" class="active">Setup</a></nav>
+</header>
+
+<div class="setup-layout">
+  <aside class="side">
+    <a href="#company">Company &amp; Certificate</a>
+    <a href="#channels">Channels / Loads</a>
+    <a href="#profiles">Battery Profiles</a>
+    <a href="#notifications">Notifications</a>
+    <a href="#advanced">Advanced</a>
+    <div class="side-note" id="cfgFile"></div>
+  </aside>
+
+  <main class="setup-main">
+    <section class="panel sec" id="company">
+      <div class="panel-head"><h2>Company &amp; Certificate</h2>
+        <a class="btn ghost" href="/api/setup/sample-certificate.pdf" target="_blank" title="Uses saved settings">Preview certificate</a></div>
+      <div class="sec-body" id="companyBody"></div>
+    </section>
+
+    <section class="panel sec" id="channels">
+      <div class="panel-head"><h2>Channels / Loads <small>one row per electronic load channel</small></h2>
+        <div class="row">
+          <button class="btn ghost" id="discoverBtn">Find instruments</button>
+          <button class="btn primary" id="addChannelBtn">+ Add channel</button>
+        </div></div>
+      <div class="sec-body">
+        <div class="callout" id="discoverOut" hidden></div>
+        <div class="table-wrap"><table class="edit-table" id="chTable">
+          <thead><tr><th>ID</th><th>Name</th><th>Driver</th><th>VISA address</th><th>Command set</th>
+            <th title="Only for multi-channel mainframes">Mainframe ch</th><th>Max A</th>
+            <th title="Simulator only: 1 = real time">Sim speed</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <p class="help">Saving channel changes reconnects all loads, so the bench must be idle.
+          <b>Test</b> talks to the load right now using this row, even before you save.</p>
+      </div>
+    </section>
+
+    <section class="panel sec" id="profiles">
+      <div class="panel-head"><h2>Battery Profiles <small>one per battery model</small></h2>
+        <button class="btn primary" id="addProfileBtn">+ Add profile</button></div>
+      <div class="sec-body" id="profilesBody"></div>
+    </section>
+
+    <section class="panel sec" id="notifications">
+      <div class="panel-head"><h2>Notifications <small>Node-RED, Teams, Power Automate… any webhook URL</small></h2>
+        <button class="btn primary" id="addHookBtn">+ Add webhook</button></div>
+      <div class="sec-body">
+        <div id="stationBody"></div>
+        <div id="hooksBody"></div>
+        <h3 class="sub-h">Recent deliveries <button class="btn ghost small" id="refreshLogBtn">Refresh</button></h3>
+        <div class="table-wrap"><table id="logTable"><thead><tr><th>Time</th><th>Webhook</th><th>Event</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <section class="panel sec" id="advanced">
+      <div class="panel-head"><h2>Advanced</h2></div>
+      <div class="sec-body" id="advancedBody"></div>
+    </section>
+  </main>
+</div>
+
+<div class="savebar" id="savebar">
+  <span id="dirtyMsg">No unsaved changes</span>
+  <div class="row">
+    <button class="btn ghost" id="discardBtn">Discard</button>
+    <button class="btn primary" id="saveBtn">Save</button>
+  </div>
+</div>
+<div id="errors" class="errors" hidden></div>
+<div id="toast"></div>
+<script src="/static/setup.js"></script>
+</body>
+</html>

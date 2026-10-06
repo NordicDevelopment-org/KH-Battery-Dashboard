@@ -14,4 +14,12 @@ def make_driver(ch: ChannelConfig) -> LoadDriver:
     raise ValueError(f"Unknown driver {ch.driver}")
 
 
-__all__ = ["LoadDriver", "Measurement", "make_driver"]
+def close_shared_sessions() -> None:
+    """Close pooled VISA sessions (used when the Setup page changes hardware)."""
+    import sys
+    scpi = sys.modules.get(__name__ + ".scpi")
+    if scpi:
+        scpi.close_all()
+
+
+__all__ = ["LoadDriver", "Measurement", "make_driver", "close_shared_sessions"]

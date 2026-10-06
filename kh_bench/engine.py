@@ -17,7 +17,8 @@ from typing import Optional
 
 from .config import BatteryProfile, BenchConfig, ChannelConfig
 from .db import Database, now_iso
-from .drivers import LoadDriver, make_driver
+from .drivers import LoadDriver, close_shared_sessions, make_driver
+from .notify import Notifier
 from .soc import ah_to_remove, soc_after, soc_from_ocv
 
 log = logging.getLogger("kh_bench")
@@ -62,6 +63,8 @@ class Bench:
         self.config = config
         self.db = db
         self.channels: dict[int, Channel] = {c.id: Channel(c) for c in config.channels}
+        self.notifier = Notifier(lambda: self.config.notifications)
+        self._shutting_down = False
 
     # ---------- lifecycle ----------
     async def startup(self) -> None:
@@ -79,13 +82,10 @@ class Bench:
         except Exception as e:
             ch.status, ch.message = "offline", f"Connect failed: {e}"
             log.warning("%s: %s", ch.cfg.name, ch.message)
+            self.notifier.emit("channel.offline", f"{ch.cfg.name}: {ch.message}",
+                               channel=ch.cfg.name)
 
-    async def shutdown(self) -> None:
-        for ch in self.channels.values():
-            ch.stop_requested = True
-        tasks = [ch.task for ch in self.channels.values() if ch.task]
-        if tasks:
-            await asyncio.wait(tasks, timeout=10)
+    async def _close_all(self) -> None:
         for ch in self.channels.values():
             if ch.driver:
                 try:
@@ -93,6 +93,32 @@ class Bench:
                     await asyncio.to_thread(ch.driver.close)
                 except Exception:
                     pass
+        await asyncio.to_thread(close_shared_sessions)
+
+    async def apply_config(self, new: BenchConfig) -> None:
+        """Swap in a new config from the Setup page. Hardware changes need an idle bench."""
+        old_ch = [c.model_dump() for c in self.config.channels]
+        new_ch = [c.model_dump() for c in new.channels]
+        if old_ch == new_ch:
+            self.config = new  # profiles/company/notifications: applies immediately
+            return
+        busy = [ch.cfg.name for ch in self.channels.values() if ch.busy]
+        if busy:
+            raise ValueError(f"Channel changes need an idle bench - still running: {', '.join(busy)}")
+        await self._close_all()
+        self.config = new
+        self.channels = {c.id: Channel(c) for c in new.channels}
+        await self.startup()
+
+    async def shutdown(self) -> None:
+        self._shutting_down = True
+        for ch in self.channels.values():
+            ch.stop_requested = True
+        tasks = [ch.task for ch in self.channels.values() if ch.task]
+        if tasks:
+            await asyncio.wait(tasks, timeout=10)
+        await self._close_all()
+        await self.notifier.drain(timeout=5)
 
     def state(self) -> list[dict]:
         return [ch.snapshot() for ch in self.channels.values()]
@@ -128,7 +154,15 @@ class Bench:
         ch.live = {"run_id": run_id, "serial": serial, "profile": prof.name, "phase": "precheck",
                    "start_soc": start_soc, "target_soc": prof.target_soc, "setpoint_a": amps}
         ch.task = asyncio.create_task(self._run(ch, run_id, prof, start_soc, amps))
+        self._notify_run("run.started", ch, run_id,
+                         f"{ch.cfg.name}: {serial} started ({prof.name}, {amps:g} A)")
         return run_id
+
+    def _notify_run(self, event: str, ch: Channel, run_id: int, text: str) -> None:
+        run = self.db.get_run(run_id) or {}
+        self.notifier.emit(event, text, channel=ch.cfg.name, serial=run.get("serial"),
+                           result=run.get("result"), cert_no=run.get("cert_no"),
+                           job_id=run.get("job_id"), run=run)
 
     def stop(self, ch_id: int) -> None:
         self.channels[ch_id].stop_requested = True
@@ -240,6 +274,9 @@ class Bench:
                                end_v_loaded=round(v, 3), ah_removed=round(ah, 4),
                                wh_removed=round(wh, 2), final_soc=round(final_soc, 2))
             ch.live["eta_s"] = 0
+            self._notify_run("run.resting", ch, run_id,
+                             f"{ch.cfg.name}: {ch.live['serial']} discharged to {final_soc:.1f}%, "
+                             f"resting {prof.rest_minutes:g} min")
 
             # 3. rest
             ch.status = "resting"
@@ -285,6 +322,8 @@ class Bench:
                            ocv_v=round(ocv, 3), phase="done")
             ch.message = f"PASS - {final_soc:.1f}% SOC, OCV {ocv:.2f} V" if result == "PASS" \
                 else "FAIL - " + "; ".join(reasons)
+            self._notify_run("run.passed" if result == "PASS" else "run.failed", ch, run_id,
+                             f"{ch.cfg.name}: {ch.live['serial']} {ch.message}")
 
         except (RunFailed, RunAborted) as e:
             aborted = isinstance(e, RunAborted)
@@ -294,6 +333,8 @@ class Bench:
                                final_soc=round(soc_after(prof.rated_ah, start_soc, ah), 2))
             ch.live.update(result="FAIL", fail_reason=str(e), phase="done")
             ch.message = ("ABORTED - " if aborted else "FAIL - ") + str(e)
+            self._notify_run("run.aborted" if aborted else "run.failed", ch, run_id,
+                             f"{ch.cfg.name}: {ch.live['serial']} {ch.message}")
         except Exception as e:
             log.exception("%s run %s crashed", ch.cfg.name, run_id)
             self.db.update_run(run_id, status="aborted", result="FAIL",
@@ -301,12 +342,24 @@ class Bench:
                                ah_removed=round(ah, 4), wh_removed=round(wh, 2))
             ch.live.update(result="FAIL", fail_reason=f"Equipment error: {e}", phase="done")
             ch.message = f"EQUIPMENT ERROR - {e}"
+            self._notify_run("run.failed", ch, run_id,
+                             f"{ch.cfg.name}: {ch.live['serial']} {ch.message}")
         finally:
             try:
                 await self._io(ch, drv.enable, False)
             except Exception as e:
                 ch.message += f" | WARNING: could not turn load off: {e}"
             ch.status = "done"
+            self._check_all_done()
+
+    def _check_all_done(self) -> None:
+        if self._shutting_down or any(c.busy for c in self.channels.values()):
+            return
+        done = [c for c in self.channels.values() if c.status == "done"]
+        passed = sum(c.live.get("result") == "PASS" for c in done)
+        self.notifier.emit("bench.all_done",
+                           f"all channels finished: {passed} PASS, {len(done) - passed} FAIL - "
+                           "swap batteries", passed=passed, failed=len(done) - passed)
 
     def next_cert_no(self) -> str:
         prefix = f"KH-{datetime.now():%Y%m%d}-"
