@@ -34,7 +34,11 @@ CREATE TABLE IF NOT EXISTS runs (
     start_v REAL, end_v_loaded REAL, ocv_v REAL,
     ah_removed REAL DEFAULT 0, wh_removed REAL DEFAULT 0,
     final_soc REAL, ocv_soc_est REAL, max_temp_c REAL,
-    cert_no TEXT
+    cert_no TEXT,
+    soc_limit REAL, capacity_factor REAL, worst_soc REAL, uncertainty_pts REAL,
+    ah_load REAL,                       -- load's own Ah counter, when the preset reports one
+    warnings TEXT,                      -- advisory notes (OCV window, cross-check), not failures
+    manufacturer TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_runs_serial ON runs(serial);
 CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
@@ -61,6 +65,22 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
         self.lock = threading.Lock()
+        self._migrate()
+
+    # Columns added after the first release. CREATE TABLE IF NOT EXISTS does not
+    # touch an existing table, so add them one by one when missing.
+    _RUN_COLUMNS_ADDED = {
+        "soc_limit": "REAL", "capacity_factor": "REAL", "worst_soc": "REAL",
+        "uncertainty_pts": "REAL", "ah_load": "REAL", "warnings": "TEXT",
+        "manufacturer": "TEXT DEFAULT ''",
+    }
+
+    def _migrate(self) -> None:
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(runs)")}
+        for col, typ in self._RUN_COLUMNS_ADDED.items():
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {typ}")
+        self.conn.commit()
 
     def _exec(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
         with self.lock:

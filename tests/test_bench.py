@@ -8,17 +8,22 @@ from kh_bench.config import BatteryProfile, BenchConfig, BenchSettings, ChannelC
 from kh_bench.db import Database
 from kh_bench.drivers.simulated import SimulatedLoad
 from kh_bench.engine import Bench
-from kh_bench.soc import ah_to_remove, ocv_from_soc, soc_from_ocv
+from kh_bench.engine import power_capped_current
+from kh_bench.soc import (ah_to_remove, measurement_uncertainty_pts, ocv_from_soc, soc_after,
+                          soc_from_ocv)
 
 FAST = 5000  # simulated seconds per real second
 
 
-def make_config(n_channels=2, **profile_overrides) -> BenchConfig:
-    prof = dict(name="T100", model="Test 100Ah", rated_ah=100, discharge_a=25, rest_minutes=30)
+def make_config(n_channels=2, channel_overrides=None, **profile_overrides) -> BenchConfig:
+    prof = dict(name="T100", model="Test 100Ah", rated_ah=100, discharge_a=25, rest_minutes=30,
+                verified=True)
     prof.update(profile_overrides)
+    ch = dict(time_scale=FAST)
+    ch.update(channel_overrides or {})
     return BenchConfig(
         bench=BenchSettings(sample_interval_s=0.05, log_interval_s=60),
-        channels=[ChannelConfig(id=i, name=f"CH{i}", time_scale=FAST) for i in range(1, n_channels + 1)],
+        channels=[ChannelConfig(id=i, name=f"CH{i}", **ch) for i in range(1, n_channels + 1)],
         profiles=[BatteryProfile(**prof)],
     )
 
@@ -32,8 +37,56 @@ async def run_one(bench: Bench, ch_id=1, serial="SN1", start_soc=100.0, timeout=
 def test_soc_math():
     assert ah_to_remove(100, 100, 30) == pytest.approx(70)
     assert ah_to_remove(50, 90, 30) == pytest.approx(30)
+    # worst-case: a 105% battery must end at 25% of rated -> remove 80 Ah
+    assert ah_to_remove(100, 100, 25, 1.05) == pytest.approx(80)
+    assert soc_after(100, 100, 80) == pytest.approx(20)        # nominal
+    assert soc_after(100, 100, 80, 1.05) == pytest.approx(25)  # worst case
     for soc in (10, 30, 55, 90):
         assert soc_from_ocv(ocv_from_soc(soc)) == pytest.approx(soc, abs=0.5)
+
+
+def test_uncertainty_and_power_cap():
+    # Siglent SDL1000X readback: 0.05% rdg + 0.05% of 30 A FS, at 13 A over 80 Ah / 100 Ah
+    u = measurement_uncertainty_pts(80, 100, 13.0, 0.05, 0.05, 30.0)
+    assert u == pytest.approx((0.0005 + 0.0005 * 30 / 13) * 0.8 * 100, rel=1e-6)
+    assert 0.1 < u < 0.2
+    # 180 W cap on a 13.4 V pack -> ~13.4 A, never more than requested
+    assert power_capped_current(25, 13.4, 180) == pytest.approx(180 / 13.4, abs=1e-3)
+    assert power_capped_current(10, 13.4, 180) == 10
+    assert power_capped_current(25, 13.4, None) == 25
+
+
+def test_profile_validation():
+    with pytest.raises(ValueError):
+        BatteryProfile(name="bad", rated_ah=100, discharge_a=10, target_soc=30, soc_limit=30)
+    with pytest.raises(ValueError):
+        BatteryProfile(name="bad", rated_ah=100, discharge_a=10, target_soc=25, min_final_soc=25)
+
+
+def test_unverified_profile_cannot_start():
+    async def go():
+        bench = Bench(make_config(verified=False), Database(":memory:"))
+        await bench.startup()
+        with pytest.raises(ValueError, match="not verified"):
+            bench.start(1, "SN1", "T100")
+        await bench.shutdown()
+
+    asyncio.run(go())
+
+
+def test_power_cap_limits_current_and_passes():
+    async def go():
+        bench = Bench(make_config(channel_overrides=dict(max_power_w=180)), Database(":memory:"))
+        await bench.startup()
+        run = await run_one(bench, timeout=40)
+        await bench.shutdown()
+        return run
+
+    run = asyncio.run(go())
+    assert run["result"] == "PASS", run["fail_reason"]
+    assert run["discharge_a"] < 14.0          # 180 W / ~13.5 V, not the 25 A requested
+    assert run["worst_soc"] <= run["soc_limit"]
+    assert run["uncertainty_pts"] > 0
 
 
 def test_full_cycle_pass():
@@ -47,10 +100,13 @@ def test_full_cycle_pass():
     bench, run = asyncio.run(go())
     assert run["result"] == "PASS", run["fail_reason"]
     assert run["status"] == "complete"
-    assert 29.0 <= run["final_soc"] <= 30.5
-    assert run["ah_removed"] == pytest.approx(70, abs=1.0)
+    # default profile: k=1.05, target 25 -> remove 80 Ah; nominal ends ~20 %
+    assert run["ah_removed"] == pytest.approx(80, abs=1.0)
+    assert 19.0 <= run["final_soc"] <= 21.0
+    assert 24.0 <= run["worst_soc"] <= 25.5
+    assert run["worst_soc"] <= 30
     assert run["cert_no"].startswith("KH-")
-    assert 3.18 * 4 <= run["ocv_v"] <= 3.30 * 4
+    assert 3.15 * 4 <= run["ocv_v"] <= 3.30 * 4
     samples = bench.db.samples(run["id"])
     assert {s["phase"] for s in samples} >= {"discharge", "rest"}
     assert bench.channels[1].driver.on is False  # load left OFF

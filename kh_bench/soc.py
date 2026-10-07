@@ -4,6 +4,16 @@ SOC on this bench is determined by coulomb counting (amp-hours removed from a
 known starting SOC). LiFePO4 has a very flat voltage curve between ~20-80% SOC,
 so open-circuit voltage (OCV) is only used as a sanity check, never as the
 primary SOC measurement.
+
+Two SOC numbers are tracked for every run, both as a percentage of RATED Ah
+(the IATA DGR / 49 CFR 173.185 limit is written against rated capacity):
+
+  nominal     assumes the battery holds exactly its rated capacity
+  worst case  assumes it holds `capacity_factor` x rated (real LFP packs are
+              usually delivered over nameplate) and adds the load's current
+              readback uncertainty
+
+A run passes when the worst case is at or under the profile's `soc_limit`.
 """
 
 from bisect import bisect_left
@@ -51,10 +61,32 @@ def soc_from_ocv(cell_v: float) -> float:
     return 0.0
 
 
-def ah_to_remove(rated_ah: float, start_soc: float, target_soc: float) -> float:
-    """Amp-hours to pull out to go from start_soc to target_soc."""
-    return max(0.0, (start_soc - target_soc) / 100.0 * rated_ah)
+def ah_to_remove(rated_ah: float, start_soc: float, target_soc: float,
+                 capacity_factor: float = 1.0) -> float:
+    """Amp-hours to pull out so that even a battery holding capacity_factor x rated
+    ends at target_soc (as % of rated).
+
+    start_soc is the fraction of the battery's ACTUAL capacity present (100 = full),
+    target_soc is a percentage of RATED capacity:
+        Ah = rated * (start/100 * k - target/100)
+    With k = 1 this is the plain (start - target)% of rated.
+    """
+    return max(0.0, rated_ah * (start_soc / 100.0 * capacity_factor - target_soc / 100.0))
 
 
-def soc_after(rated_ah: float, start_soc: float, ah_removed: float) -> float:
-    return start_soc - ah_removed / rated_ah * 100.0
+def soc_after(rated_ah: float, start_soc: float, ah_removed: float,
+              capacity_factor: float = 1.0) -> float:
+    """SOC as % of rated after removing ah_removed, for a battery that started at
+    start_soc of capacity_factor x rated."""
+    return (start_soc / 100.0 * capacity_factor - ah_removed / rated_ah) * 100.0
+
+
+def measurement_uncertainty_pts(ah_removed: float, rated_ah: float, setpoint_a: float,
+                                err_pct_reading: float, err_pct_fs: float, fs_a: float) -> float:
+    """SOC points of uncertainty from the load's current readback spec
+    +/-(err_pct_reading % of reading + err_pct_fs % of full scale fs_a),
+    applied to the whole Ah integral at the setpoint current."""
+    if setpoint_a <= 0 or rated_ah <= 0:
+        return 0.0
+    rel = err_pct_reading / 100.0 + (err_pct_fs / 100.0) * fs_a / setpoint_a
+    return rel * ah_removed / rated_ah * 100.0

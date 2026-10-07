@@ -23,7 +23,8 @@ class SimulatedLoad(LoadDriver):
     def new_battery(self) -> None:
         """Simulate a fresh, fully charged battery being connected."""
         self.soc = self._fixed_soc if self._fixed_soc is not None else random.uniform(99.0, 100.0)
-        self.cap = self.capacity_ah * random.uniform(0.98, 1.04)
+        # real LFP packs are usually delivered a few % over nameplate
+        self.cap = self.capacity_ah * random.uniform(0.99, 1.04)
         self.temp = random.uniform(22, 25)
 
     def connect(self) -> str:

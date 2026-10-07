@@ -109,6 +109,8 @@ function renderChannels() {
       sim ? h("td", { class: "muted" }, "–") : cell({ key: "preset", type: "select", options: meta.presets }),
       sim ? h("td", { class: "muted" }, "–") : cell({ key: "load_channel", type: "number", step: 1, nullable: true }, { width: "64px" }),
       cell({ key: "max_current_a", type: "number" }, { width: "70px" }),
+      cell({ key: "max_power_w", type: "number", nullable: true, placeholder: "180" }, { width: "70px" }),
+      sim ? h("td", { class: "muted" }, "–") : cell({ key: "remote_sense", type: "checkbox" }),
       sim ? cell({ key: "time_scale", type: "number" }, { width: "70px" }) : h("td", { class: "muted" }, "1×"),
       h("td", { class: "row-actions" },
         h("button", { class: "btn ghost small", onclick: () => testChannel(ch, out) }, "Test"),
@@ -147,7 +149,7 @@ async function discover() {
 function addChannel() {
   const id = Math.max(0, ...cfg.channels.map((c) => c.id)) + 1;
   const last = cfg.channels[cfg.channels.length - 1];
-  cfg.channels.push({ ...(last || { driver: "simulated", preset: "rigol_dl3000", max_current_a: 30, time_scale: 1 }),
+  cfg.channels.push({ ...(last || { driver: "simulated", preset: "siglent_sdl1000", max_current_a: 30, max_power_w: 180, remote_sense: true, time_scale: 1 }),
     id, name: `CH${id}`, resource: last?.driver === "scpi" ? "" : null, load_channel: null });
   markDirty(); renderChannels();
 }
@@ -156,14 +158,21 @@ function addChannel() {
 const PROFILE_GROUPS = [
   ["Battery", [
     { key: "name", label: "Profile name", help: "What operators pick on the dashboard" },
-    { key: "model", label: "Model (printed on cert)" },
+    { key: "manufacturer", label: "Manufacturer" },
+    { key: "model", label: "Model (exact mfr part no.)" },
     { key: "cells_series", label: "Cells in series", type: "number", step: 1, help: "4 = 12.8 V, 8 = 25.6 V, 16 = 51.2 V" },
-    { key: "rated_ah", label: "Rated capacity", type: "number", unit: "Ah" },
+    { key: "rated_ah", label: "Rated capacity", type: "number", unit: "Ah", help: "Datasheet RATED value, not typical" },
+    { key: "source", label: "Spec source", help: "Datasheet title / URL / date the numbers came from" },
+    { key: "verified", label: "Verified vs datasheet", type: "checkbox", help: "Runs refuse to start until this is ticked" },
+  ]],
+  ["Compliance", [
+    { key: "soc_limit", label: "Regulatory limit", type: "number", unit: "%", help: "IATA / 49 CFR: 30% of rated" },
+    { key: "target_soc", label: "Worst-case target", type: "number", unit: "%", help: "Aim point for the worst-case battery; keep below the limit" },
+    { key: "capacity_factor", label: "Capacity factor", type: "number", step: 0.01, help: "Worst-case actual / rated. Set from lot qualification" },
+    { key: "min_final_soc", label: "Minimum nominal SOC", type: "number", unit: "%", help: "Below this = FAIL (over-discharged)" },
   ]],
   ["Discharge", [
-    { key: "discharge_a", label: "Discharge current", type: "number", unit: "A", help: "Capped by each channel's Max A" },
-    { key: "target_soc", label: "Target SOC", type: "number", unit: "%" },
-    { key: "min_final_soc", label: "Minimum final SOC", type: "number", unit: "%", help: "Below this = FAIL (over-discharged)" },
+    { key: "discharge_a", label: "Discharge current", type: "number", unit: "A", help: "Capped by each channel's Max A and Max W" },
     { key: "cutoff_cell_v", label: "Cutoff voltage", type: "number", unit: "V/cell", help: "Safety stop under load" },
     { key: "max_temp_c", label: "Max temperature", type: "number", unit: "°C" },
     { key: "max_minutes", label: "Timeout", type: "number", unit: "min", nullable: true, help: "Blank = 1.5× expected time" },
@@ -178,11 +187,14 @@ const PROFILE_GROUPS = [
 ];
 
 function profileSummary(p) {
-  const ah = p.rated_ah * (100 - p.target_soc) / 100;
+  const k = p.capacity_factor || 1;
+  const ah = p.rated_ah * (k - p.target_soc / 100);
+  const nominal = 100 - ah / p.rated_ah * 100;
   const hrs = p.discharge_a ? ah / p.discharge_a : 0;
   const total = hrs * 60 + (p.rest_minutes || 0);
-  return `${p.rated_ah} Ah · ${p.cells_series}S ${(p.cells_series * 3.2).toFixed(1)} V · ${p.discharge_a} A → ${p.target_soc}%` +
-    ` · removes ${ah.toFixed(1)} Ah · ≈ ${Math.floor(total / 60)}h ${String(Math.round(total % 60)).padStart(2, "0")}m per battery incl. rest`;
+  return `${p.verified ? "" : "UNVERIFIED · "}${p.rated_ah} Ah · ${p.cells_series}S ${(p.cells_series * 3.2).toFixed(1)} V · ${p.discharge_a} A` +
+    ` · removes ${ah.toFixed(1)} Ah → ${nominal.toFixed(0)}% nominal / ${p.target_soc}% worst (k ${k})` +
+    ` · ≈ ${Math.floor(total / 60)}h ${String(Math.round(total % 60)).padStart(2, "0")}m incl. rest (before power cap)`;
 }
 
 function renderProfiles(openIdx = -1) {
@@ -209,9 +221,10 @@ function renderProfiles(openIdx = -1) {
 }
 
 function addProfile() {
-  cfg.profiles.push({ name: "New profile", model: "", cells_series: 4, rated_ah: 100, discharge_a: 25,
-    target_soc: 30, min_final_soc: 20, cutoff_cell_v: 2.8, min_start_cell_v: 3.32, rest_minutes: 30,
-    ocv_check: true, ocv_cell_min: 3.18, ocv_cell_max: 3.3, max_minutes: null, max_temp_c: 55 });
+  cfg.profiles.push({ name: "New profile", manufacturer: "", model: "", source: "", verified: false,
+    cells_series: 4, rated_ah: 100, discharge_a: 25, soc_limit: 30, target_soc: 25, capacity_factor: 1.05,
+    min_final_soc: 15, cutoff_cell_v: 2.8, min_start_cell_v: 3.32, rest_minutes: 30,
+    ocv_check: true, ocv_cell_min: 3.15, ocv_cell_max: 3.3, max_minutes: null, max_temp_c: 55 });
   markDirty(); renderProfiles(cfg.profiles.length - 1);
 }
 

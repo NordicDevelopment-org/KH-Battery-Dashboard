@@ -22,10 +22,12 @@ class Company(BaseModel):
     cert_subtitle: str = "Lithium Iron Phosphate (LiFePO4) Batteries"
     cert_statement: str = (
         "We certify that each lithium iron phosphate (LiFePO4) battery listed on this "
-        "certificate was discharged under controlled conditions and verified to be at a "
-        "state of charge (SOC) not exceeding {target_soc}% of its rated capacity at the "
-        "time of test. SOC was determined by coulomb counting (amp-hours removed from a "
-        "fully charged state) and confirmed by a rested open-circuit voltage check."
+        "certificate was discharged under controlled conditions and, based on the "
+        "measurements and stated assumptions, its state of charge (SOC) does not exceed "
+        "{soc_limit}% of its rated capacity. SOC was determined by coulomb counting "
+        "(amp-hours removed from a fully charged state). The worst-case figure assumes the "
+        "battery held {capacity_factor}x its rated capacity and includes instrument "
+        "measurement uncertainty. Rested open-circuit voltage is recorded for reference only."
     )
     cert_footer: str = ""
 
@@ -47,26 +49,60 @@ class ChannelConfig(BaseModel):
     preset: str = "rigol_dl3000"         # command set, see drivers/scpi.py
     load_channel: Optional[int] = None   # for multi-channel mainframes
     max_current_a: float = Field(30.0, gt=0)  # hard limit for this load
+    # Power cap. Discharge current is reduced so V_start * I <= max_power_w.
+    # Siglent SDL1020X-E is 200 W rated (OPP trips at 210 W): use 180.
+    max_power_w: Optional[float] = Field(None, gt=0)
+    remote_sense: bool = False           # 4-wire sense leads landed on the battery posts
+    # Current readback accuracy of this load, used for the certificate's uncertainty
+    # figure: +/-(err_pct_reading % of reading + err_pct_fs % of range fs_a).
+    # Defaults = Siglent SDL1000X datasheet readback current spec, 30 A range.
+    err_pct_reading: float = Field(0.05, ge=0)
+    err_pct_fs: float = Field(0.05, ge=0)
+    fs_a: float = Field(30.0, gt=0)
     # simulated
     time_scale: float = Field(1.0, gt=0)  # >1 speeds up simulated runs (demo/test only)
 
 
 class BatteryProfile(BaseModel):
     name: str
-    model: str = ""
+    model: str = ""                      # exact manufacturer model number (printed on cert)
+    manufacturer: str = ""
     cells_series: int = Field(4, ge=1, le=32)  # 4S = 12.8 V nominal
-    rated_ah: float = Field(gt=0)
-    discharge_a: float = Field(gt=0)     # constant-current discharge setpoint
-    target_soc: float = Field(30.0, gt=0, lt=100)  # stop when coulomb-counted SOC hits this
-    min_final_soc: float = 20.0          # below this = FAIL (over-discharged)
+    rated_ah: float = Field(gt=0)        # RATED capacity from the datasheet, not "typical"
+    discharge_a: float = Field(gt=0)     # CC setpoint; capped by channel max A and max W
+    # --- compliance -------------------------------------------------------
+    # The regulatory ceiling (IATA DGR PI 965/966, 49 CFR 173.185): 30% of rated.
+    soc_limit: float = Field(30.0, gt=0, lt=100)
+    # Where we aim the WORST-CASE battery. Below soc_limit so measurement
+    # uncertainty and capacity spread still pass.
+    target_soc: float = Field(25.0, gt=0, lt=100)
+    # Worst-case actual capacity as a multiple of rated. LFP packs are routinely
+    # shipped 2-5% over nameplate. Replace with your own lot-qualification data.
+    capacity_factor: float = Field(1.05, ge=1.0, le=1.5)
+    min_final_soc: float = 15.0          # nominal SOC below this = FAIL (over-discharged)
+    # Set true only after every value above has been checked against the
+    # manufacturer datasheet. Unverified profiles cannot be started.
+    verified: bool = False
+    source: str = ""                     # where the numbers came from (doc title, URL, date)
+    # --- safety -------------------------------------------------------------
     cutoff_cell_v: float = 2.80          # safety: abort if loaded V/cell drops below
     min_start_cell_v: float = 3.32       # pre-check: rested V/cell must be >= (battery full?)
-    rest_minutes: float = 30.0           # rest after discharge before OCV reading
-    ocv_check: bool = True
-    ocv_cell_min: float = 3.18           # rested V/cell window expected at ~30%
-    ocv_cell_max: float = 3.30
     max_minutes: Optional[float] = None  # timeout; default = 1.5x expected time
     max_temp_c: float = 55.0             # abort if the load reports a higher temp
+    # --- OCV sanity check (advisory only, never decides PASS/FAIL) -----------
+    rest_minutes: float = 30.0           # rest after discharge before OCV reading
+    ocv_check: bool = True               # outside the window -> warning on the record
+    ocv_cell_min: float = 3.15           # rested V/cell window expected around 20-30%
+    ocv_cell_max: float = 3.30
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.target_soc >= self.soc_limit:
+            raise ValueError(f"{self.name}: target_soc ({self.target_soc}) must be below "
+                             f"soc_limit ({self.soc_limit})")
+        if self.min_final_soc >= self.target_soc:
+            raise ValueError(f"{self.name}: min_final_soc must be below target_soc")
+        return self
 
     @property
     def nominal_v(self) -> float:

@@ -109,7 +109,7 @@ def _signatures(operator: str = "") -> KeepTogether:
         [operator or line, line, "_" * 16],
         ["Approved by (QA)", "Signature", "Date"],
         [line, line, "_" * 16],
-    ], colWidths=[2.6 * inch, 2.9 * inch, 2.0 * inch], rowHeights=[12, 26, 22, 26])
+    ], colWidths=[2.6 * inch, 2.9 * inch, 2.0 * inch], rowHeights=[12, 22, 18, 22])
     t.setStyle(TableStyle([("FONT", (0, 0), (-1, 0), "Helvetica", 7.5),
                            ("FONT", (0, 2), (-1, 2), "Helvetica", 7.5),
                            ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
@@ -140,8 +140,12 @@ def _doc(buf: BytesIO, title: str) -> SimpleDocTemplate:
                              topMargin=0.5 * inch, bottomMargin=0.7 * inch)
 
 
-def _statement(cfg: BenchConfig, target_soc: float) -> Paragraph:
-    return Paragraph(cfg.company.cert_statement.format(target_soc=f"{target_soc:g}"), S["body"])
+def _statement(cfg: BenchConfig, soc_limit: float, capacity_factor: float = 1.05,
+               target_soc: float = 25.0) -> Paragraph:
+    text = cfg.company.cert_statement.format(soc_limit=f"{soc_limit:g}",
+                                             capacity_factor=f"{capacity_factor:g}",
+                                             target_soc=f"{target_soc:g}")
+    return Paragraph(text, S["body"])
 
 
 def _chart(samples: list[dict], key: str, label: str, color, w: float, h: float) -> Drawing:
@@ -175,6 +179,8 @@ def unit_certificate(cfg: BenchConfig, run: dict, samples: list[dict],
     doc = _doc(buf, f"SOC Certificate {run['serial']}")
     passed = run.get("result") == "PASS"
     story = _header(cfg, cert_no, _fmt_dt(run.get("ended_at")))
+    soc_limit = run.get("soc_limit") or 30.0
+    k = run.get("capacity_factor") or 1.0
 
     if not passed:
         story += [Paragraph(f"<font color='#b3261e'><b>NOT CERTIFIED - result: "
@@ -189,16 +195,19 @@ def unit_certificate(cfg: BenchConfig, run: dict, samples: list[dict],
         ("Lot / Batch", job["lot"] if job else ""),
         ("Chemistry / Config", f"LiFePO4, {run['cells_series']}S, "
                                f"{run['cells_series'] * 3.2:.1f} V nominal"),
-    ]), Spacer(1, 10), _statement(cfg, run["target_soc"])]
+        ("Manufacturer", run.get("manufacturer") or ""),
+    ]), Spacer(1, 10), _statement(cfg, soc_limit, k, run["target_soc"])]
 
     result_color = "#1e7b34" if passed else "#b3261e"
     story += [Paragraph("Test Results", S["h"]), _kv_grid([
         ("Rated Capacity", _f(run["rated_ah"], 1, " Ah")),
         ("Result", f"<font color='{result_color}'><b>{run.get('result') or '-'}</b></font>"),
         ("Starting SOC (assumed)", _f(run["start_soc"], 0, " %")),
-        ("Final SOC", f"<b>{_f(run.get('final_soc'), 1, ' %')}</b>"),
-        ("Target SOC", f"&le; {_f(run['target_soc'], 0, ' %')}"),
-        ("Rested OCV", _f(run.get("ocv_v"), 2, " V")),
+        ("SOC, nominal", f"{_f(run.get('final_soc'), 1, ' %')} (actual = rated)"),
+        ("Regulatory Limit", f"&le; {_f(soc_limit, 0, ' %')} of rated"),
+        ("SOC, worst case", f"<b>{_f(run.get('worst_soc'), 1, ' %')}</b> (actual = {k:g} x rated)"),
+        ("Rested OCV", f"{_f(run.get('ocv_v'), 2, ' V')} (reference only)"),
+        ("Meas. Uncertainty", f"&plusmn;{_f(run.get('uncertainty_pts'), 2, ' pts')}"),
         ("Capacity Removed", _f(run.get("ah_removed"), 2, " Ah")),
         ("Energy Removed", _f(run.get("wh_removed"), 1, " Wh")),
         ("Starting Voltage", _f(run.get("start_v"), 2, " V")),
@@ -210,17 +219,28 @@ def unit_certificate(cfg: BenchConfig, run: dict, samples: list[dict],
     if samples:
         w = 3.7 * inch
         charts = Table([[
-            _chart(samples, "voltage", "Battery Voltage (V)", ACCENT, w, 1.9 * inch),
-            _chart(samples, "soc", "State of Charge (%)", PASS_GREEN, w, 1.9 * inch),
+            _chart(samples, "voltage", "Battery Voltage (V)", ACCENT, w, 1.6 * inch),
+            _chart(samples, "soc", "State of Charge (%)", PASS_GREEN, w, 1.6 * inch),
         ]], colWidths=[3.75 * inch] * 2)
         charts.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0)]))
         story += [Paragraph("Discharge Record", S["h"]), charts]
 
+    if run.get("warnings"):
+        story += [Paragraph("Notes for Review", S["h"]),
+                  Paragraph(run["warnings"].replace("; ", "<br/>"), S["small"])]
+
+    ah_load = run.get("ah_load")
+    xcheck = (f" Load's own counter: {_f(ah_load, 2, ' Ah')} (smaller of the two credited)."
+              if ah_load else "")
     story += [Paragraph("Method &amp; Equipment", S["h"]), Paragraph(
-        f"Constant-current discharge at {_f(run['discharge_a'], 1, ' A')} on bench channel "
-        f"{run['channel']}. Amp-hours integrated from measured current; SOC = start SOC - "
-        f"Ah removed / rated Ah. Load switched off at target and battery rested before "
-        f"open-circuit voltage was recorded. Instrument: {run.get('instrument') or '-'}.",
+        f"Constant-current discharge at {_f(run['discharge_a'], 2, ' A')} on bench channel "
+        f"{run['channel']}. Amp-hours integrated from measured current.{xcheck} "
+        f"Nominal SOC = start SOC - Ah removed / rated Ah. Worst-case SOC assumes the battery "
+        f"held {k:g} x rated capacity and adds the instrument's current readback uncertainty. "
+        f"LiFePO4 open-circuit voltage is not a reliable SOC indicator in this region and is "
+        f"recorded for reference only. Instrument: {run.get('instrument') or '-'}. "
+        f"This certificate documents state of charge only; classification, packing, marking "
+        f"and declaration under the IATA DGR / 49 CFR remain the shipper's responsibility.",
         S["small"]), Spacer(1, 6), _signatures(run.get("operator") or "")]
 
     doc.build(story, onFirstPage=_footer_cb(cfg, cert_no), onLaterPages=_footer_cb(cfg, cert_no))
@@ -237,7 +257,9 @@ def batch_certificate(cfg: BenchConfig, job: dict, runs: list[dict], cert_no: st
         if r.get("result") == "PASS":
             latest[r["serial"]] = r
     passed = sorted(latest.values(), key=lambda r: r["serial"])
-    target = max((r["target_soc"] for r in passed), default=30)
+    target = max((r["target_soc"] for r in passed), default=25)
+    limit = max((r.get("soc_limit") or 30 for r in passed), default=30)
+    kmax = max((r.get("capacity_factor") or 1.0 for r in passed), default=1.0)
     models = sorted({r.get("model") or r["profile"] for r in passed})
     dates = [r["ended_at"] for r in passed if r.get("ended_at")]
 
@@ -249,17 +271,17 @@ def batch_certificate(cfg: BenchConfig, job: dict, runs: list[dict], cert_no: st
         ("Model(s)", ", ".join(models)),
         ("Lot / Batch", job.get("lot")),
         ("Test Dates", f"{_fmt_dt(min(dates))[:10]} to {_fmt_dt(max(dates))[:10]}" if dates else "-"),
-    ]), Spacer(1, 10), _statement(cfg, target), Paragraph("Certified Units", S["h"])]
+    ]), Spacer(1, 10), _statement(cfg, limit, kmax, target), Paragraph("Certified Units", S["h"])]
 
-    head = ["#", "Serial Number", "Model", "Rated\nAh", "Start\nV", "Ah\nRemoved",
-            "Final\nSOC %", "Rested\nOCV V", "Tested", "Result"]
+    head = ["#", "Serial Number", "Model", "Rated\nAh", "Ah\nRemoved", "SOC %\nnominal",
+            "SOC %\nworst", "Rested\nOCV V", "Tested", "Result"]
     rows = [head] + [[
         str(n), r["serial"], Paragraph(r.get("model") or r["profile"], S["cell"]),
-        _f(r["rated_ah"], 0), _f(r.get("start_v")), _f(r.get("ah_removed")),
-        _f(r.get("final_soc"), 1), _f(r.get("ocv_v")), _fmt_dt(r.get("ended_at")), "PASS",
+        _f(r["rated_ah"], 0), _f(r.get("ah_removed")), _f(r.get("final_soc"), 1),
+        _f(r.get("worst_soc"), 1), _f(r.get("ocv_v")), _fmt_dt(r.get("ended_at")), "PASS",
     ] for n, r in enumerate(passed, 1)]
     t = Table(rows, repeatRows=1, hAlign="LEFT",
-              colWidths=[w * inch for w in (0.3, 1.35, 1.35, 0.5, 0.55, 0.65, 0.6, 0.6, 1.05, 0.55)])
+              colWidths=[w * inch for w in (0.3, 1.35, 1.35, 0.5, 0.65, 0.6, 0.6, 0.6, 1.0, 0.55)])
     t.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
         ("FONT", (0, 1), (-1, -1), "Helvetica", 8),
@@ -285,10 +307,13 @@ def batch_certificate(cfg: BenchConfig, job: dict, runs: list[dict], cert_no: st
 
     story += [Paragraph("Method", S["h"]), Paragraph(
         "Each battery was discharged at constant current from a fully charged state on a "
-        "programmable electronic load. Amp-hours removed were integrated from measured current; "
-        "the load was switched off when the calculated SOC reached the target, and the battery "
-        "was rested before open-circuit voltage was recorded. Individual discharge records are "
-        "retained and available on request.", S["small"]),
+        "programmable electronic load. Amp-hours removed were integrated from measured current. "
+        "Nominal SOC assumes actual capacity equals rated; worst-case SOC assumes actual capacity "
+        f"equals {kmax:g} x rated and includes instrument measurement uncertainty. Units are "
+        f"certified only when the worst case is at or under {limit:g}% of rated capacity. "
+        "Rested open-circuit voltage is recorded for reference only. Individual discharge "
+        "records are retained and available on request. Classification, packing, marking and "
+        "declaration under the IATA DGR / 49 CFR remain the shipper's responsibility.", S["small"]),
         Spacer(1, 6), _signatures(", ".join(sorted({r["operator"] for r in passed if r.get("operator")})))]
 
     doc.build(story, onFirstPage=_footer_cb(cfg, cert_no), onLaterPages=_footer_cb(cfg, cert_no))
