@@ -39,11 +39,41 @@ amp-hours out of a **fully charged** battery; rested voltage is recorded for ref
 
 ## Quick start (demo, no hardware)
 
+Run every command from the **project folder**. Running them from anywhere else
+(e.g. `C:\WINDOWS\System32`) is the #1 cause of setup errors.
+
+**1. Get the code** (pick one)
+
+| Option | Steps |
+|---|---|
+| A - No Git | On GitHub click the green **Code** button > **Download ZIP**. Extract to `C:\KH-Battery-Dashboard`. GitHub ZIPs extract with a nested `KH-Battery-Dashboard-main` folder: either move its contents up one level, or `cd` into the nested folder in step 2. |
+| B - Git | Run the two commands below. |
+
+```powershell
+cd C:\
+git clone https://github.com/NordicDevelopment-org/KH-Battery-Dashboard.git
+```
+
+**2. Open PowerShell in the project folder**
+
+```powershell
+cd C:\KH-Battery-Dashboard
+dir
+```
+Confirm `requirements.txt` and the `kh_bench` folder are listed. If not, you're in the wrong folder.
+
+**3. Install and run**
+
 ```powershell
 python -m pip install -r requirements.txt
 python -m kh_bench
 ```
-Open **http://localhost:8000** in Chrome/Edge. The example config runs 8 simulated channels at
+Leave this window open. Closing it stops the bench (`Ctrl+C` also stops it).
+The console only shows real events (run started/passed/failed, webhook errors).
+
+**4. Open the dashboard**
+
+Open **http://localhost:8000** in Chrome or Edge. The example config runs 8 simulated channels at
 120x speed, so a full cycle takes about 2 minutes.
 
 | Page | URL | Used for |
@@ -51,8 +81,15 @@ Open **http://localhost:8000** in Chrome/Edge. The example config runs 8 simulat
 | Dashboard | `http://localhost:8000/` | Running batteries, printing certs |
 | Setup | `http://localhost:8000/setup` | Loads, battery profiles, cert wording, notifications |
 
-The console only shows real events (run started/passed/failed, webhook errors). Per-request
-logging is off.
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `Could not open requirements file` or `No module named kh_bench` | You're not in the project folder. `cd` into it and check with `dir` (step 2). |
+| Wheel/build errors on a very new Python (e.g. 3.14) | Install Python 3.12, then use `py -3.12 -m pip install -r requirements.txt` and `py -3.12 -m kh_bench`. |
+| `git clone` asks for a login or returns 404 | The repo is private. Sign in to GitHub, or use Download ZIP while signed in. |
+| Port 8000 already in use | Close the other app, or change the port in **Setup > Advanced** (restart required). |
+| pip says "A new release of pip is available" | Safe to ignore. |
 
 ## Operating the bench (daily workflow)
 
